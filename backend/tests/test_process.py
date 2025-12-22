@@ -1,11 +1,11 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from app.routers.process import (
+from app.models.transaction import (
     BankStatementFieldExtractionSchema,
     Transaction,
-    convert_extraction_to_csv,
 )
+from app.utils.csv import convert_transactions_to_csv
 from fastapi.testclient import TestClient
 from main import app
 
@@ -42,11 +42,11 @@ def sample_extraction():
 class TestProcessEndpoints:
     """Test suite for document processing endpoints."""
 
+    @patch("app.services.ade.AdeClientService.get_client")
     @patch("app.routers.process.storage_service.read_file_content")
-    @patch("app.routers.process.Ade")
     @patch("app.routers.process.storage_service.save_processed_file")
     def test_process_file_success(
-        self, mock_save, mock_ade_class, mock_read, client, sample_extraction
+        self, mock_save, mock_read, mock_get_client, client, sample_extraction
     ):
         """Test successful file processing."""
         # Setup mocks
@@ -54,13 +54,16 @@ class TestProcessEndpoints:
 
         # Mock Ade client and response
         mock_client = MagicMock()
-        mock_ade_class.return_value = mock_client
+        mock_get_client.return_value = mock_client
 
         mock_parse_response = MagicMock()
         mock_parse_response.markdown = "# Bank Statement\nSample markdown content"
         # Mock chunks for chunk-based processing
         mock_chunk = MagicMock()
         mock_chunk.markdown = "# Bank Statement\nSample markdown content"
+        mock_chunk.id = "chunk-1"
+        mock_chunk.type = "text"
+        mock_chunk.grounding = None
         mock_parse_response.chunks = [mock_chunk]
 
         mock_client.ade.parse.return_value = mock_parse_response
@@ -79,7 +82,7 @@ class TestProcessEndpoints:
         }
         mock_client.ade.extract.return_value = extract_dict
 
-        response = client.post("/process/folder1/statement.pdf")
+        response = client.post("/api/process/folder1/statement.pdf")
 
         assert response.status_code == 200
         assert "File processed successfully" in response.json()["message"]
@@ -91,7 +94,7 @@ class TestProcessEndpoints:
         """Test processing file when read fails."""
         mock_read.side_effect = Exception("File not found")
 
-        response = client.post("/process/folder1/nonexistent.pdf")
+        response = client.post("/api/process/folder1/nonexistent.pdf")
 
         assert response.status_code == 500
         assert "File not found" in response.json()["detail"]
@@ -102,7 +105,7 @@ class TestProcessEndpoints:
         csv_content = "Date,Transaction ID,Description,Amount,Balance\n2024-01-01,TXN001,Salary,1000.00,50000.00\n"
         mock_get.return_value = csv_content
 
-        response = client.get("/process/folder1/statement.pdf.csv/download")
+        response = client.get("/api/process/folder1/statement.pdf.csv/download")
 
         assert response.status_code == 200
         assert "text/csv" in response.headers.get("content-type", "")
@@ -114,7 +117,7 @@ class TestProcessEndpoints:
         """Test downloading non-existent processed file."""
         mock_get.side_effect = Exception("File not found")
 
-        response = client.get("/process/folder1/nonexistent.csv/download")
+        response = client.get("/api/process/folder1/nonexistent.csv/download")
 
         assert response.status_code == 500
 
@@ -124,7 +127,7 @@ class TestCSVConversion:
 
     def test_convert_extraction_to_csv(self, sample_extraction):
         """Test CSV conversion from extraction schema."""
-        csv_content = convert_extraction_to_csv(sample_extraction)
+        csv_content = convert_transactions_to_csv(sample_extraction)
 
         # Check headers
         assert "Date" in csv_content
@@ -144,7 +147,7 @@ class TestCSVConversion:
         """Test CSV conversion with no transactions."""
         extraction = BankStatementFieldExtractionSchema(transactions=[])
 
-        csv_content = convert_extraction_to_csv(extraction)
+        csv_content = convert_transactions_to_csv(extraction)
         lines = csv_content.strip().split("\n")
 
         # Should only have header row
@@ -157,7 +160,7 @@ class TestDynamicCSVConversion:
 
     def test_convert_dynamic_extraction_with_subset_fields(self):
         """Test dynamic CSV conversion with a schema that has fewer fields."""
-        from app.routers.process import convert_dynamic_extraction_to_csv
+        from app.utils.csv import convert_dict_transactions_to_csv
 
         # Transaction data as raw dicts
         transactions = [
@@ -180,7 +183,7 @@ class TestDynamicCSVConversion:
             }
         }
 
-        csv_content = convert_dynamic_extraction_to_csv(transactions, schema)
+        csv_content = convert_dict_transactions_to_csv(transactions, schema)
 
         # Should have 3 columns (Date, Amount, Balance)
         lines = csv_content.strip().split("\n")
@@ -200,7 +203,7 @@ class TestDynamicCSVConversion:
 
     def test_convert_dynamic_extraction_with_custom_field(self):
         """Test dynamic CSV conversion with custom field names."""
-        from app.routers.process import convert_dynamic_extraction_to_csv
+        from app.utils.csv import convert_dict_transactions_to_csv
 
         transactions = [
             {"date": "2024-01-01", "amount": "+500.00", "category": "Food"},
@@ -220,7 +223,7 @@ class TestDynamicCSVConversion:
             }
         }
 
-        csv_content = convert_dynamic_extraction_to_csv(transactions, schema)
+        csv_content = convert_dict_transactions_to_csv(transactions, schema)
 
         # Should have Category header (title-cased)
         assert "Category" in csv_content
@@ -228,7 +231,7 @@ class TestDynamicCSVConversion:
 
     def test_convert_dynamic_extraction_filters_internal_fields(self):
         """Test that internal fields like credit_amount are filtered out."""
-        from app.routers.process import convert_dynamic_extraction_to_csv
+        from app.utils.csv import convert_dict_transactions_to_csv
 
         transactions = [
             {
@@ -254,7 +257,7 @@ class TestDynamicCSVConversion:
             "properties": {"transactions": {"items": {"$ref": "#/$defs/Transaction"}}},
         }
 
-        csv_content = convert_dynamic_extraction_to_csv(transactions, schema)
+        csv_content = convert_dict_transactions_to_csv(transactions, schema)
 
         # Internal fields should be filtered out
         header = csv_content.split("\n")[0]
@@ -301,12 +304,12 @@ class TestBankStatementSchema:
 class TestParseEndpoint:
     """Test suite for the parse-only endpoint."""
 
+    @patch("app.services.ade.AdeClientService.get_client")
     @patch("app.routers.process.storage_service.read_file_content")
-    @patch("app.routers.process.Ade")
     @patch("app.routers.process.storage_service.save_parsed_output")
     @patch("app.routers.process.storage_service.get_parsed_output")
     def test_parse_file_success(
-        self, mock_get_parsed, mock_save_parsed, mock_ade_class, mock_read, client
+        self, mock_get_parsed, mock_save_parsed, mock_read, mock_get_client, client
     ):
         """Test successful file parsing."""
         # No cached data
@@ -315,7 +318,7 @@ class TestParseEndpoint:
 
         # Mock Ade client
         mock_client = MagicMock()
-        mock_ade_class.return_value = mock_client
+        mock_get_client.return_value = mock_client
 
         mock_parse_response = MagicMock()
         mock_parse_response.markdown = "# Bank Statement\nSample markdown content"
@@ -330,7 +333,7 @@ class TestParseEndpoint:
 
         mock_client.ade.parse.return_value = mock_parse_response
 
-        response = client.post("/process/folder1/statement.pdf/parse")
+        response = client.post("/api/process/folder1/statement.pdf/parse")
 
         assert response.status_code == 200
         data = response.json()
@@ -348,7 +351,7 @@ class TestParseEndpoint:
             "chunks": [{"id": "chunk-1", "type": "text", "markdown": "Content"}],
         }
 
-        response = client.post("/process/folder1/statement.pdf/parse")
+        response = client.post("/api/process/folder1/statement.pdf/parse")
 
         assert response.status_code == 200
         data = response.json()
@@ -364,7 +367,7 @@ class TestSchemaEndpoints:
         """Test getting default schema when no custom schema exists."""
         mock_get_schema.return_value = None
 
-        response = client.get("/process/folder1/statement.pdf/schema")
+        response = client.get("/api/process/folder1/statement.pdf/schema")
 
         assert response.status_code == 200
         data = response.json()
@@ -382,7 +385,7 @@ class TestSchemaEndpoints:
         }
         mock_get_schema.return_value = custom_schema
 
-        response = client.get("/process/folder1/statement.pdf/schema")
+        response = client.get("/api/process/folder1/statement.pdf/schema")
 
         assert response.status_code == 200
         data = response.json()
@@ -395,7 +398,7 @@ class TestSchemaEndpoints:
         new_schema = {"type": "object", "properties": {"new_field": {"type": "string"}}}
 
         response = client.put(
-            "/process/folder1/statement.pdf/schema", json={"schema": new_schema}
+            "/api/process/folder1/statement.pdf/schema", json={"schema": new_schema}
         )
 
         assert response.status_code == 200
@@ -406,7 +409,7 @@ class TestSchemaEndpoints:
     def test_update_schema_invalid_not_object(self, client):
         """Test that updating with invalid schema (not an object) fails."""
         response = client.put(
-            "/process/folder1/statement.pdf/schema", json={"schema": "not a dict"}
+            "/api/process/folder1/statement.pdf/schema", json={"schema": "not a dict"}
         )
 
         # Pydantic returns 422 for type validation errors
@@ -415,7 +418,7 @@ class TestSchemaEndpoints:
     def test_update_schema_missing_required_keys(self, client):
         """Test that updating with schema missing required keys fails."""
         response = client.put(
-            "/process/folder1/statement.pdf/schema",
+            "/api/process/folder1/statement.pdf/schema",
             json={"schema": {"random_key": "value"}},
         )
 
@@ -426,7 +429,7 @@ class TestSchemaEndpoints:
         """Test successfully deleting custom schema."""
         mock_delete_schema.return_value = True
 
-        response = client.delete("/process/folder1/statement.pdf/schema")
+        response = client.delete("/api/process/folder1/statement.pdf/schema")
 
         assert response.status_code == 200
         data = response.json()
@@ -437,7 +440,7 @@ class TestSchemaEndpoints:
         """Test deleting schema when none exists."""
         mock_delete_schema.return_value = False
 
-        response = client.delete("/process/folder1/statement.pdf/schema")
+        response = client.delete("/api/process/folder1/statement.pdf/schema")
 
         assert response.status_code == 200
         data = response.json()
@@ -452,17 +455,17 @@ class TestExtractEndpoint:
         """Test extraction fails when no parsed data exists."""
         mock_get_parsed.return_value = None
 
-        response = client.post("/process/folder1/statement.pdf/extract")
+        response = client.post("/api/process/folder1/statement.pdf/extract")
 
         assert response.status_code == 404
         assert "parsed data not found" in response.json()["detail"].lower()
 
+    @patch("app.services.ade.AdeClientService.get_client")
     @patch("app.routers.process.storage_service.get_parsed_output")
     @patch("app.routers.process.storage_service.get_extraction_schema")
     @patch("app.routers.process.storage_service.save_processed_file")
-    @patch("app.routers.process.Ade")
     def test_extract_with_default_schema(
-        self, mock_ade_class, mock_save, mock_get_schema, mock_get_parsed, client
+        self, mock_save, mock_get_schema, mock_get_parsed, mock_get_client, client
     ):
         """Test extraction using default schema."""
         # Setup parsed data
@@ -478,7 +481,7 @@ class TestExtractEndpoint:
 
         # Mock Ade client
         mock_client = MagicMock()
-        mock_ade_class.return_value = mock_client
+        mock_get_client.return_value = mock_client
 
         extract_dict = {
             "transactions": [
@@ -492,7 +495,7 @@ class TestExtractEndpoint:
         }
         mock_client.ade.extract.return_value = extract_dict
 
-        response = client.post("/process/folder1/statement.pdf/extract")
+        response = client.post("/api/process/folder1/statement.pdf/extract")
 
         assert response.status_code == 200
         data = response.json()
@@ -500,12 +503,12 @@ class TestExtractEndpoint:
         assert data["used_custom_schema"] is False
         assert "csv_content" in data
 
+    @patch("app.services.ade.AdeClientService.get_client")
     @patch("app.routers.process.storage_service.get_parsed_output")
     @patch("app.routers.process.storage_service.get_extraction_schema")
     @patch("app.routers.process.storage_service.save_processed_file")
-    @patch("app.routers.process.Ade")
     def test_extract_with_custom_schema(
-        self, mock_ade_class, mock_save, mock_get_schema, mock_get_parsed, client
+        self, mock_save, mock_get_schema, mock_get_parsed, mock_get_client, client
     ):
         """Test extraction using custom schema."""
         mock_get_parsed.return_value = {
@@ -520,7 +523,7 @@ class TestExtractEndpoint:
         }
 
         mock_client = MagicMock()
-        mock_ade_class.return_value = mock_client
+        mock_get_client.return_value = mock_client
 
         extract_dict = {
             "transactions": [
@@ -534,7 +537,7 @@ class TestExtractEndpoint:
         }
         mock_client.ade.extract.return_value = extract_dict
 
-        response = client.post("/process/folder1/statement.pdf/extract")
+        response = client.post("/api/process/folder1/statement.pdf/extract")
 
         assert response.status_code == 200
         data = response.json()

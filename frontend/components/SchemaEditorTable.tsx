@@ -380,7 +380,7 @@ export default function SchemaEditorTable({
                                 Type
                             </th>
                             <th className="p-2 text-left text-xs font-semibold text-secondary-600 uppercase tracking-wider">
-                                Description (helps AI understand what to extract)
+                                Description (guides AI extraction)
                             </th>
                             <th className="p-2 text-center text-xs font-semibold text-secondary-600 uppercase tracking-wider w-20">
                                 Required

@@ -490,7 +490,7 @@ const Preview: React.FC = () => {
                                         }`}
                                 >
                                     <FileText size={16} className="mr-2" />
-                                    Markdown
+                                    Raw Text
                                 </button>
                                 <button
                                     onClick={() => setActiveView('chunks')}

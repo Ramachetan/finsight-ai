@@ -24,7 +24,7 @@ class TestFoldersEndpoints:
             "status": "EMPTY"
         }
         
-        response = client.post("/folders/", json={"name": "Test Folder"})
+        response = client.post("/api/folders/", json={"name": "Test Folder"})
         
         assert response.status_code == 200
         assert response.json()["name"] == "Test Folder"
@@ -36,7 +36,7 @@ class TestFoldersEndpoints:
         """Test folder creation failure."""
         mock_create.return_value = None
         
-        response = client.post("/folders/", json={"name": "Test Folder"})
+        response = client.post("/api/folders/", json={"name": "Test Folder"})
         
         assert response.status_code == 500
         assert "Failed to create folder" in response.json()["detail"]
@@ -49,7 +49,7 @@ class TestFoldersEndpoints:
             {"id": "folder2", "name": "Folder 2", "status": "HAS_FILES"}
         ]
         
-        response = client.get("/folders/")
+        response = client.get("/api/folders/")
         
         assert response.status_code == 200
         assert len(response.json()) == 2
@@ -67,7 +67,7 @@ class TestFoldersEndpoints:
         }
         mock_list_files.return_value = ["file1.pdf", "file2.pdf"]
         
-        response = client.get("/folders/folder1")
+        response = client.get("/api/folders/folder1")
         
         assert response.status_code == 200
         assert response.json()["id"] == "folder1"
@@ -79,7 +79,7 @@ class TestFoldersEndpoints:
         """Test getting non-existent folder."""
         mock_get.return_value = None
         
-        response = client.get("/folders/nonexistent")
+        response = client.get("/api/folders/nonexistent")
         
         assert response.status_code == 404
         assert "Folder not found" in response.json()["detail"]
@@ -90,7 +90,7 @@ class TestFoldersEndpoints:
         """Test successful folder deletion."""
         mock_exists.return_value = True
         
-        response = client.delete("/folders/folder1")
+        response = client.delete("/api/folders/folder1")
         
         assert response.status_code == 204
         mock_delete.assert_called_once_with("folder1")
@@ -100,7 +100,7 @@ class TestFoldersEndpoints:
         """Test deleting non-existent folder."""
         mock_exists.return_value = False
         
-        response = client.delete("/folders/nonexistent")
+        response = client.delete("/api/folders/nonexistent")
         
         assert response.status_code == 404
         assert "Folder not found" in response.json()["detail"]
@@ -113,7 +113,7 @@ class TestFoldersEndpoints:
         mock_upload.return_value = "file.pdf"
         
         response = client.post(
-            "/folders/folder1/upload",
+            "/api/folders/folder1/upload",
             files={"files": ("test.pdf", b"fake pdf content", "application/pdf")}
         )
         
@@ -127,7 +127,7 @@ class TestFoldersEndpoints:
         mock_exists.return_value = False
         
         response = client.post(
-            "/folders/nonexistent/upload",
+            "/api/folders/nonexistent/upload",
             files={"files": ("test.pdf", b"fake pdf content", "application/pdf")}
         )
         
@@ -142,7 +142,7 @@ class TestFoldersEndpoints:
         mock_upload.return_value = "file.pdf"
         
         response = client.post(
-            "/folders/folder1/upload",
+            "/api/folders/folder1/upload",
             files=[
                 ("files", ("test1.pdf", b"content1", "application/pdf")),
                 ("files", ("test2.pdf", b"content2", "application/pdf"))
@@ -161,7 +161,7 @@ class TestFoldersEndpoints:
         mock_list.return_value = ["test.pdf", "other.pdf"]
         mock_delete.return_value = True
         
-        response = client.delete("/folders/folder1/files/test.pdf")
+        response = client.delete("/api/folders/folder1/files/test.pdf")
         
         assert response.status_code == 204
         mock_delete.assert_called_once_with("folder1", "test.pdf")
@@ -171,7 +171,7 @@ class TestFoldersEndpoints:
         """Test deleting file from non-existent folder."""
         mock_exists.return_value = False
         
-        response = client.delete("/folders/nonexistent/files/test.pdf")
+        response = client.delete("/api/folders/nonexistent/files/test.pdf")
         
         assert response.status_code == 404
         assert "Folder not found" in response.json()["detail"]
@@ -183,7 +183,7 @@ class TestFoldersEndpoints:
         mock_exists.return_value = True
         mock_list.return_value = ["other.pdf"]
         
-        response = client.delete("/folders/folder1/files/nonexistent.pdf")
+        response = client.delete("/api/folders/folder1/files/nonexistent.pdf")
         
         assert response.status_code == 404
         assert "File not found" in response.json()["detail"]
@@ -197,7 +197,7 @@ class TestFoldersEndpoints:
         mock_list.return_value = ["test.pdf"]
         mock_delete.return_value = False
         
-        response = client.delete("/folders/folder1/files/test.pdf")
+        response = client.delete("/api/folders/folder1/files/test.pdf")
         
         assert response.status_code == 500
         assert "Failed to delete file" in response.json()["detail"]
