@@ -1,6 +1,6 @@
 
 import axios, { AxiosError } from 'axios';
-import { Folder, FolderDetails, ApiError, FileMetadata } from '../types.ts';
+import { Folder, FolderDetails, ApiError, FileMetadata, SchemaResponse, ParseResponse, ExtractResponse } from '../types.ts';
 import { API_BASE_URL } from '../constants.ts';
 
 const apiClient = axios.create({
@@ -95,6 +95,16 @@ export const isProcessed = async (folderId: string, filename: string): Promise<b
   }
 };
 
+export const isParsed = async (folderId: string, filename: string): Promise<boolean> => {
+  try {
+    const encodedFilename = encodeURIComponent(filename);
+    const response = await apiClient.get<FileMetadata>(`/process/${folderId}/${encodedFilename}/metadata`);
+    return response.data.has_markdown === true;
+  } catch (error) {
+    return false;
+  }
+};
+
 export const deleteFile = async (folderId: string, filename: string): Promise<void> => {
   const encodedFilename = encodeURIComponent(filename);
   await apiClient.delete(`/folders/${folderId}/files/${encodedFilename}`);
@@ -109,5 +119,43 @@ export const getFileMetadata = async (folderId: string, filename: string): Promi
 export const getFileMarkdown = async (folderId: string, filename: string): Promise<string> => {
   const encodedFilename = encodeURIComponent(filename);
   const { data } = await apiClient.get(`/process/${folderId}/${encodedFilename}/markdown`);
+  return data;
+};
+
+// --- Parse & Extract Workflow ---
+
+export const parseFile = async (folderId: string, filename: string, forceReparse: boolean = false): Promise<ParseResponse> => {
+  const encodedFilename = encodeURIComponent(filename);
+  const { data } = await apiClient.post<ParseResponse>(
+    `/process/${folderId}/${encodedFilename}/parse`,
+    null,
+    { params: { force_reparse: forceReparse } }
+  );
+  return data;
+};
+
+export const getExtractionSchema = async (folderId: string, filename: string): Promise<SchemaResponse> => {
+  const encodedFilename = encodeURIComponent(filename);
+  const { data } = await apiClient.get<SchemaResponse>(`/process/${folderId}/${encodedFilename}/schema`);
+  return data;
+};
+
+export const updateExtractionSchema = async (folderId: string, filename: string, schema: Record<string, unknown>): Promise<void> => {
+  const encodedFilename = encodeURIComponent(filename);
+  await apiClient.put(`/process/${folderId}/${encodedFilename}/schema`, { schema });
+};
+
+export const deleteExtractionSchema = async (folderId: string, filename: string): Promise<void> => {
+  const encodedFilename = encodeURIComponent(filename);
+  await apiClient.delete(`/process/${folderId}/${encodedFilename}/schema`);
+};
+
+export const extractTransactions = async (folderId: string, filename: string, useCustomSchema: boolean = true): Promise<ExtractResponse> => {
+  const encodedFilename = encodeURIComponent(filename);
+  const { data } = await apiClient.post<ExtractResponse>(
+    `/process/${folderId}/${encodedFilename}/extract`,
+    null,
+    { params: { use_custom_schema: useCustomSchema } }
+  );
   return data;
 };

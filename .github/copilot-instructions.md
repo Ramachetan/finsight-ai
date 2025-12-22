@@ -12,20 +12,44 @@ Full-stack application for extracting transaction data from bank statement PDFs 
 - **Interface:** `StorageBackend` ABC defines all storage operations
 - **Implementations:** `GCSBackend` (prod) and `LocalBackend` (dev/test)
 - **Selection:** Set `ENVIRONMENT=local` to use local filesystem, otherwise defaults to GCS
-- **Structure:** `uploads/{folder_id}/`, `parsed/{folder_id}/`, `processed/{folder_id}/`, `metadata/{folder_id}.json`
+- **Structure:** 
+  - `uploads/{folder_id}/` - Original uploaded PDFs
+  - `parsed/{folder_id}/{filename}.json` - Cached parsed markdown + chunks
+  - `processed/{folder_id}/{filename}.csv` - Extracted transaction CSVs
+  - `schemas/{folder_id}/{filename}.json` - Custom extraction schemas (per file)
+  - `metadata/{folder_id}.json` - Folder metadata
 
 All storage calls go through `StorageService` facade which routes to the active backend.
 
 ### Document Processing Pipeline
 [app/routers/process.py](../backend/app/routers/process.py) implements a **two-phase cost-optimized workflow**:
 
-1. **Parse Phase (expensive):** `client.ade.parse()` converts PDF → markdown + chunks
-   - Result cached to `parsed/{folder_id}/{filename}.json` for reuse
-   - Set `force_reparse=True` only when parsing model updates
+**Phase 1: Parse (one-time, expensive)**
+- `POST /process/{folder_id}/{filename}/parse` - Parse document to markdown + chunks
+- `client.ade.parse()` converts PDF → markdown + chunks
+- Result cached to `parsed/{folder_id}/{filename}.json` for reuse
+- Set `force_reparse=True` only when parsing model updates
 
-2. **Extract Phase (cheaper):** `client.ade.extract()` extracts structured data from markdown
-   - Uses cached parsed output on retry/failure → massive cost savings
-   - Processes chunks individually for long documents (prevents cutoff)
+**Phase 2: Extract (repeatable, cheaper)**
+- `POST /process/{folder_id}/{filename}/extract` - Extract structured data using schema
+- `client.ade.extract()` pulls data from cached markdown
+- Uses custom schema if saved, otherwise default `BankStatementFieldExtractionSchema`
+- Can re-extract multiple times from same parse → massive cost savings
+- Processes chunks individually for long documents (prevents cutoff)
+
+**Legacy Endpoint (backward compatible):**
+- `POST /process/{folder_id}/{filename}` - Parse + Extract in one call (original workflow)
+
+### Custom Schema Workflow
+Users can customize what data is extracted without re-parsing:
+
+1. **Parse once:** `POST /parse` generates markdown + chunks (cached)
+2. **Get schema:** `GET /schema` returns current schema (custom or default)
+3. **Edit schema:** `PUT /schema` saves custom extraction schema
+4. **Extract:** `POST /extract` uses custom schema → generates CSV
+5. **Iterate:** Modify schema and re-extract without re-parsing
+
+Schemas are stored per-file at `schemas/{folder_id}/{filename}.json`.
 
 ### Transaction Normalization
 The `Transaction` Pydantic model ([process.py:62-252](../backend/app/routers/process.py#L62-L252)) handles polymorphic bank statement layouts:
@@ -83,7 +107,13 @@ cd frontend/ && npm run dev
 
 ### Router Organization
 - [app/routers/folders.py](../backend/app/routers/folders.py) - CRUD for folders + file upload/download
-- [app/routers/process.py](../backend/app/routers/process.py) - Document processing + CSV download
+- [app/routers/process.py](../backend/app/routers/process.py) - Document processing endpoints:
+  - Parse: `/parse` - Convert PDF to markdown/chunks
+  - Schema: `/schema` (GET/PUT/DELETE) - Manage custom extraction schemas
+  - Extract: `/extract` - Extract data using stored schema
+  - Legacy: `POST /{filename}` - Combined parse + extract
+  - Metadata: `/metadata`, `/markdown` - View parsed document data
+  - Download: `/download` - Get processed CSV
 
 Both import from centralized `app.services.storage.StorageService`.
 
@@ -96,6 +126,7 @@ Both import from centralized `app.services.storage.StorageService`.
 - Uploaded files: Keep original names in `uploads/{folder_id}/`
 - Processed outputs: `{original_filename}.csv` in `processed/{folder_id}/`
 - Cached parses: `{original_filename}.json` in `parsed/{folder_id}/`
+- Custom schemas: `{original_filename}.json` in `schemas/{folder_id}/`
 
 ### Testing Best Practices
 - Use `monkeypatch.setenv("ENVIRONMENT", "local")` to force local storage

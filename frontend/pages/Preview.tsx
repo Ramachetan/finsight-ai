@@ -5,11 +5,12 @@ import * as api from '../lib/api';
 import { useToast } from '../hooks/useToast';
 import { Spinner } from '../components/ui/Spinner';
 import { Button } from '../components/ui/Button.tsx';
-import { FileMetadata, ParsedChunk } from '../types.ts';
+import SchemaEditorTable from '../components/SchemaEditorTable.tsx';
+import { FileMetadata, ParsedChunk, ExtractResponse } from '../types.ts';
 import {
     Home, ChevronRight, ZoomIn, ZoomOut, Maximize2, RotateCcw,
     FileText, Table, Download, Layers, Type, Image, Grid3X3,
-    ChevronDown, ChevronUp, Eye, EyeOff
+    ChevronDown, ChevronUp, Eye, EyeOff, Settings
 } from 'lucide-react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import Papa from 'papaparse';
@@ -28,7 +29,7 @@ type CsvData = {
     rows: string[][];
 };
 
-type ActiveView = 'csv' | 'markdown' | 'chunks';
+type ActiveView = 'csv' | 'markdown' | 'chunks' | 'schema';
 
 const ChunkTypeIcon: React.FC<{ type?: string; className?: string }> = ({ type, className = '' }) => {
     switch (type) {
@@ -144,9 +145,34 @@ const Preview: React.FC = () => {
         };
     }, [loadData]);
 
+    // After loading, if no CSV exists (not yet extracted), default to schema view
+    useEffect(() => {
+        if (!isLoading && !csvData && metadata?.has_markdown) {
+            // File is parsed but not extracted - show schema editor by default
+            setActiveView('schema');
+        }
+    }, [isLoading, csvData, metadata]);
+
     function onDocumentLoadSuccess({ numPages }: { numPages: number }): void {
         setNumPages(numPages);
     }
+
+    // Handle extraction complete - parse CSV content and switch to CSV view
+    const handleExtractionComplete = useCallback((result: ExtractResponse) => {
+        if (result.csv_content) {
+            Papa.parse<string[]>(result.csv_content, {
+                complete: (results) => {
+                    const [headerRow, ...rows] = results.data;
+                    setCsvData({ headers: headerRow, rows });
+                },
+                error: (error: Error) => {
+                    console.error('CSV Parse Error:', error);
+                }
+            });
+        }
+        // Switch to CSV view to show results
+        setActiveView('csv');
+    }, []);
 
     const handleZoomIn = () => {
         setScale(prev => Math.min(prev + 0.25, 3.0));
@@ -450,6 +476,21 @@ const Preview: React.FC = () => {
                                 >
                                     <Table size={16} className="mr-2" />
                                     CSV
+                                    {csvData && (
+                                        <span className="ml-1.5 bg-green-100 text-green-700 text-xs px-1.5 py-0.5 rounded-full">
+                                            {csvData.rows.filter(r => r && r.length > 0 && r.some(c => (c ?? '').trim() !== '')).length}
+                                        </span>
+                                    )}
+                                </button>
+                                <button
+                                    onClick={() => setActiveView('markdown')}
+                                    className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeView === 'markdown'
+                                        ? 'bg-white text-primary-600 shadow-sm'
+                                        : 'text-secondary-600 hover:text-secondary-900'
+                                        }`}
+                                >
+                                    <FileText size={16} className="mr-2" />
+                                    Markdown
                                 </button>
                                 <button
                                     onClick={() => setActiveView('chunks')}
@@ -462,20 +503,22 @@ const Preview: React.FC = () => {
                                     Chunks
                                 </button>
                                 <button
-                                    onClick={() => setActiveView('markdown')}
-                                    className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeView === 'markdown'
+                                    onClick={() => setActiveView('schema')}
+                                    className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeView === 'schema'
                                         ? 'bg-white text-primary-600 shadow-sm'
                                         : 'text-secondary-600 hover:text-secondary-900'
                                         }`}
                                 >
-                                    <FileText size={16} className="mr-2" />
-                                    Markdown
+                                    <Settings size={16} className="mr-2" />
+                                    Schema
                                 </button>
                             </div>
-                            <Button size="sm" onClick={handleDownloadCsv} disabled={!csvData}>
-                                <Download size={16} className="mr-2" />
-                                CSV
-                            </Button>
+                            {csvData && (
+                                <Button size="sm" onClick={handleDownloadCsv}>
+                                    <Download size={16} className="mr-2" />
+                                    Download CSV
+                                </Button>
+                            )}
                         </div>
                     </div>
 
@@ -512,9 +555,18 @@ const Preview: React.FC = () => {
                                     </table>
                                 </div>
                             ) : (
-                                <div className="flex flex-col items-center justify-center h-full text-secondary-400">
-                                    <Table size={48} className="mb-4 opacity-50" />
-                                    <p>No CSV data available.</p>
+                                <div className="flex flex-col items-center justify-center h-full text-secondary-500">
+                                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-6 max-w-md text-center">
+                                        <Settings size={48} className="mx-auto mb-4 text-amber-500" />
+                                        <h3 className="text-lg font-semibold text-secondary-800 mb-2">Ready to Extract Transactions</h3>
+                                        <p className="text-secondary-600 mb-4">
+                                            Your document has been parsed. Go to the <strong>Schema</strong> tab to review or customize the extraction fields, then click <strong>Extract Transactions</strong>.
+                                        </p>
+                                        <Button size="sm" onClick={() => setActiveView('schema')}>
+                                            <Settings size={16} className="mr-2" />
+                                            Go to Schema
+                                        </Button>
+                                    </div>
                                 </div>
                             )
                         ) : activeView === 'chunks' ? (
@@ -613,6 +665,19 @@ const Preview: React.FC = () => {
                                     <Layers size={48} className="mb-4 opacity-50" />
                                     <p>No chunk data available.</p>
                                     <p className="text-sm mt-1">Process the file to see parsed chunks.</p>
+                                </div>
+                            )
+                        ) : activeView === 'schema' ? (
+                            folderId && filename ? (
+                                <SchemaEditorTable
+                                    folderId={folderId}
+                                    filename={filename}
+                                    onExtractionComplete={handleExtractionComplete}
+                                />
+                            ) : (
+                                <div className="flex flex-col items-center justify-center h-full text-secondary-400">
+                                    <Settings size={48} className="mb-4 opacity-50" />
+                                    <p>Unable to load schema editor.</p>
                                 </div>
                             )
                         ) : (

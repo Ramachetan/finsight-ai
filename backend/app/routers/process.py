@@ -305,6 +305,86 @@ def convert_extraction_to_csv(extraction: BankStatementFieldExtractionSchema) ->
     return output.getvalue()
 
 
+def convert_dynamic_extraction_to_csv(transactions: List[Dict], schema: Dict) -> str:
+    """
+    Convert extraction data to CSV dynamically based on schema fields.
+
+    This function reads the schema to determine which columns to include
+    in the CSV output, allowing users to customize which fields appear.
+
+    Args:
+        transactions: List of transaction dictionaries from extraction
+        schema: JSON Schema that was used for extraction
+
+    Returns:
+        CSV string with columns matching the schema fields
+    """
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Extract field names from schema
+    # Schema structure: {properties: {transactions: {items: {properties: {field1: ..., field2: ...}}}}}
+    field_names = []
+
+    # Navigate the JSON Schema to find transaction item properties
+    if "$defs" in schema and "Transaction" in schema["$defs"]:
+        # Standard Pydantic-generated schema format
+        txn_props = schema["$defs"]["Transaction"].get("properties", {})
+        field_names = list(txn_props.keys())
+    elif "properties" in schema:
+        if "transactions" in schema["properties"]:
+            txn_schema = schema["properties"]["transactions"]
+            if "items" in txn_schema and "properties" in txn_schema["items"]:
+                field_names = list(txn_schema["items"]["properties"].keys())
+            elif "$ref" in txn_schema.get("items", {}):
+                # Handle $ref to $defs
+                ref = txn_schema["items"]["$ref"]
+                if ref.startswith("#/$defs/"):
+                    def_name = ref.split("/")[-1]
+                    if "$defs" in schema and def_name in schema["$defs"]:
+                        txn_props = schema["$defs"][def_name].get("properties", {})
+                        field_names = list(txn_props.keys())
+        else:
+            # Flat schema - fields are directly in properties
+            field_names = list(schema["properties"].keys())
+
+    # Filter out internal/computed fields that shouldn't be in CSV
+    # These are fields used for normalization, not for output
+    internal_fields = {"credit_amount", "debit_amount", "raw_amount", "type_indicator"}
+    field_names = [f for f in field_names if f not in internal_fields]
+
+    # If no fields found, use default
+    if not field_names:
+        field_names = ["date", "transactionId", "remarks", "amount", "balance"]
+
+    # Create human-readable headers
+    header_mapping = {
+        "date": "Date",
+        "transactionId": "Transaction ID",
+        "remarks": "Description",
+        "amount": "Amount",
+        "balance": "Balance",
+    }
+    headers = [header_mapping.get(f, f.replace("_", " ").title()) for f in field_names]
+    writer.writerow(headers)
+
+    # Write transactions
+    for txn in transactions:
+        row = []
+        for field in field_names:
+            value = txn.get(field, "")
+            # Handle None values
+            if value is None:
+                value = ""
+            # Handle dict values (sometimes remarks comes as dict)
+            if isinstance(value, dict):
+                value = str(value.get("value", value.get("text", "")))
+            row.append(value)
+        writer.writerow(row)
+
+    return output.getvalue()
+
+
 def get_ade_client():
     """
     Create and return an ADE client instance.
@@ -352,6 +432,7 @@ def extract_transactions_from_parsed_data(
     """
     Extract transactions from parsed markdown data.
     This is separated to allow re-extraction from cached parsed output.
+    Returns Transaction objects for use with the default schema.
     """
     all_transactions = []
     chunks = parsed_data.get("chunks", [])
@@ -431,6 +512,91 @@ def extract_transactions_from_parsed_data(
 
         extraction = BankStatementFieldExtractionSchema(**extraction_data)
         all_transactions = extraction.transactions
+
+    return all_transactions
+
+
+def extract_transactions_as_dicts(
+    parsed_data: dict, client, schema: dict
+) -> List[Dict]:
+    """
+    Extract transactions from parsed markdown data as raw dictionaries.
+    This is used for dynamic CSV generation with custom schemas.
+    Returns raw dict data without Pydantic validation.
+    """
+    all_transactions = []
+    chunks = parsed_data.get("chunks", [])
+    markdown_content = parsed_data.get("markdown", "")
+
+    if chunks and len(chunks) > 0:
+        print(f"Processing {len(chunks)} chunks individually (dynamic schema)")
+
+        for i, chunk in enumerate(chunks):
+            chunk_markdown = (
+                chunk.get("markdown")
+                if isinstance(chunk, dict)
+                else getattr(chunk, "markdown", None)
+            )
+            if not chunk_markdown:
+                continue
+
+            print(f"Extracting from chunk {i + 1}/{len(chunks)}")
+            try:
+                chunk_markdown_bytes = chunk_markdown.encode("utf-8")
+
+                extract_response = client.ade.extract(
+                    markdown=chunk_markdown_bytes,
+                    schema=json.dumps(schema),
+                )
+
+                # Process the extraction response
+                if hasattr(extract_response, "extraction"):
+                    extraction_data = extract_response.extraction
+                elif hasattr(extract_response, "to_dict"):
+                    extraction_data = extract_response.to_dict()
+                else:
+                    extraction_data = dict(extract_response)
+
+                # Handle if extraction is wrapped
+                if (
+                    isinstance(extraction_data, dict)
+                    and "extraction" in extraction_data
+                ):
+                    extraction_data = extraction_data["extraction"]
+
+                # Get transactions as raw dicts
+                txns = extraction_data.get("transactions", [])
+                if isinstance(txns, list):
+                    all_transactions.extend(txns)
+                print(f"Chunk {i + 1}: Found {len(txns)} transactions")
+
+            except Exception as e:
+                print(f"Error extracting chunk {i + 1}: {e}")
+    else:
+        print("No chunks found, extracting from full markdown (dynamic schema)")
+        if not markdown_content:
+            raise ValueError("No markdown content available for extraction")
+
+        markdown_bytes = markdown_content.encode("utf-8")
+
+        extract_response = client.ade.extract(
+            markdown=markdown_bytes,
+            schema=json.dumps(schema),
+        )
+
+        if hasattr(extract_response, "extraction"):
+            extraction_data = extract_response.extraction
+        elif hasattr(extract_response, "to_dict"):
+            extraction_data = extract_response.to_dict()
+        else:
+            extraction_data = dict(extract_response)
+
+        if isinstance(extraction_data, dict) and "extraction" in extraction_data:
+            extraction_data = extraction_data["extraction"]
+
+        txns = extraction_data.get("transactions", [])
+        if isinstance(txns, list):
+            all_transactions = txns
 
     return all_transactions
 
@@ -718,4 +884,402 @@ def get_file_markdown(folder_id: str, filename: str):
     except HTTPException as e:
         raise e
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Phase 1: Parse-only endpoint
+# ============================================================================
+
+
+@router.post("/{folder_id}/{filename}/parse")
+def parse_file(folder_id: str, filename: str, force_reparse: bool = False):
+    """
+    Parse a document and return markdown + chunks without extracting data.
+
+    This is the first step in the two-phase workflow:
+    1. Parse: Convert PDF to markdown/chunks (this endpoint)
+    2. Extract: Extract structured data using a schema (separate endpoint)
+
+    Args:
+        folder_id: The folder containing the file
+        filename: The file to parse
+        force_reparse: If True, re-parse even if cached output exists
+
+    Returns:
+        Parsed document metadata including chunks, pages, and availability of markdown
+    """
+    try:
+        # Check for cached parsed output (unless force_reparse is requested)
+        if not force_reparse:
+            parsed_data = storage_service.get_parsed_output(folder_id, filename)
+            if parsed_data:
+                print(f"Using cached parsed output for: {filename}")
+                chunks = parsed_data.get("chunks", [])
+
+                # Calculate metadata
+                type_counts = {}
+                pages = set()
+                for chunk in chunks:
+                    chunk_type = chunk.get("type", "unknown")
+                    type_counts[chunk_type] = type_counts.get(chunk_type, 0) + 1
+                    if "grounding" in chunk and "page" in chunk["grounding"]:
+                        pages.add(chunk["grounding"]["page"])
+                    elif "page_number" in chunk:
+                        pages.add(chunk["page_number"])
+
+                return {
+                    "message": "Document already parsed (using cache)",
+                    "filename": filename,
+                    "chunks_count": len(chunks),
+                    "pages_count": len(pages) if pages else 1,
+                    "pages": sorted(list(pages)) if pages else [0],
+                    "has_markdown": bool(parsed_data.get("markdown")),
+                    "chunk_types": type_counts,
+                    "used_cache": True,
+                }
+
+        # Initialize the ADE client
+        client = get_ade_client()
+
+        _update_progress(
+            folder_id, filename, "Parsing", "Reading and converting document...", 10
+        )
+
+        # Get file content as bytes
+        file_content = storage_service.read_file_content(folder_id, filename)
+        print(f"Parsing document: {filename} ({len(file_content)} bytes)")
+
+        # Parse the document
+        parse_response = client.ade.parse(document=file_content)
+        print(
+            f"Parse completed. Chunks: {len(parse_response.chunks) if parse_response.chunks else 0}"
+        )
+
+        # Get markdown content from parse response
+        markdown_content = parse_response.markdown
+        if not markdown_content:
+            raise ValueError("No markdown content returned from parsing")
+
+        # Convert chunks to serializable format for caching
+        chunks_data = []
+        if parse_response.chunks:
+            for chunk in parse_response.chunks:
+                chunk_dict = {}
+                if hasattr(chunk, "markdown"):
+                    chunk_dict["markdown"] = chunk.markdown
+
+                if hasattr(chunk, "id"):
+                    chunk_dict["id"] = chunk.id
+                elif hasattr(chunk, "chunk_id"):
+                    chunk_dict["id"] = chunk.chunk_id
+
+                if hasattr(chunk, "type"):
+                    chunk_dict["type"] = chunk.type
+
+                if hasattr(chunk, "grounding") and chunk.grounding:
+                    grounding = chunk.grounding
+                    grounding_dict = {}
+
+                    if hasattr(grounding, "page"):
+                        grounding_dict["page"] = grounding.page
+                        chunk_dict["page_number"] = grounding.page
+
+                    if hasattr(grounding, "box") and grounding.box:
+                        box = grounding.box
+                        grounding_dict["box"] = {
+                            "left": getattr(box, "left", None)
+                            or getattr(box, "l", None),
+                            "top": getattr(box, "top", None) or getattr(box, "t", None),
+                            "right": getattr(box, "right", None)
+                            or getattr(box, "r", None),
+                            "bottom": getattr(box, "bottom", None)
+                            or getattr(box, "b", None),
+                        }
+
+                    chunk_dict["grounding"] = grounding_dict
+                elif hasattr(chunk, "page_number"):
+                    chunk_dict["page_number"] = chunk.page_number
+
+                chunks_data.append(chunk_dict)
+
+        # Build parsed data structure
+        parsed_data = {
+            "markdown": markdown_content,
+            "chunks": chunks_data,
+        }
+
+        # Save parsed output for future use
+        storage_service.save_parsed_output(folder_id, filename, parsed_data)
+        print(f"Saved parsed output for: {filename}")
+
+        _clear_progress(folder_id, filename)
+
+        # Calculate metadata for response
+        type_counts = {}
+        pages = set()
+        for chunk in chunks_data:
+            chunk_type = chunk.get("type", "unknown")
+            type_counts[chunk_type] = type_counts.get(chunk_type, 0) + 1
+            if "grounding" in chunk and "page" in chunk["grounding"]:
+                pages.add(chunk["grounding"]["page"])
+            elif "page_number" in chunk:
+                pages.add(chunk["page_number"])
+
+        return {
+            "message": "Document parsed successfully",
+            "filename": filename,
+            "chunks_count": len(chunks_data),
+            "pages_count": len(pages) if pages else 1,
+            "pages": sorted(list(pages)) if pages else [0],
+            "has_markdown": bool(markdown_content),
+            "chunk_types": type_counts,
+            "used_cache": False,
+        }
+
+    except Exception as e:
+        print(f"Error parsing file: {e}")
+        _clear_progress(folder_id, filename)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Phase 2: Schema Management endpoints
+# ============================================================================
+
+
+class SchemaUpdateRequest(BaseModel):
+    """Request body for updating an extraction schema."""
+
+    schema_definition: dict = Field(
+        ...,
+        alias="schema",
+        description="JSON Schema for extraction. Must be a valid JSON Schema object.",
+    )
+
+
+@router.get("/{folder_id}/{filename}/schema")
+def get_extraction_schema(folder_id: str, filename: str):
+    """
+    Get the extraction schema for a file.
+
+    Returns the custom schema if one has been saved, otherwise returns
+    the default BankStatementFieldExtractionSchema.
+
+    Args:
+        folder_id: The folder containing the file
+        filename: The file to get the schema for
+
+    Returns:
+        JSON Schema for extraction, plus metadata about whether it's custom or default
+    """
+    try:
+        # Check for custom schema first
+        custom_schema = storage_service.get_extraction_schema(folder_id, filename)
+        if custom_schema:
+            return {
+                "schema": custom_schema,
+                "is_custom": True,
+                "message": "Custom schema found for this file",
+            }
+
+        # Return default schema
+        default_schema = pydantic_to_json_schema(BankStatementFieldExtractionSchema)
+        return {
+            "schema": default_schema,
+            "is_custom": False,
+            "message": "Using default extraction schema",
+        }
+
+    except Exception as e:
+        print(f"Error getting extraction schema: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{folder_id}/{filename}/schema")
+def update_extraction_schema(
+    folder_id: str, filename: str, request: SchemaUpdateRequest
+):
+    """
+    Update the extraction schema for a file.
+
+    The schema must be a valid JSON Schema object. It will be used for
+    subsequent extractions instead of the default schema.
+
+    Args:
+        folder_id: The folder containing the file
+        filename: The file to set the schema for
+        request: The schema update request containing the new schema
+
+    Returns:
+        Confirmation of schema update
+    """
+    try:
+        schema = request.schema_definition
+
+        # Basic JSON Schema validation
+        if not isinstance(schema, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="Schema must be a JSON object",
+            )
+
+        # Check for required JSON Schema properties
+        if (
+            "type" not in schema
+            and "properties" not in schema
+            and "$defs" not in schema
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Schema must contain 'type', 'properties', or '$defs'",
+            )
+
+        # Save the schema
+        storage_service.save_extraction_schema(folder_id, filename, schema)
+
+        return {
+            "message": "Schema updated successfully",
+            "filename": filename,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating extraction schema: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{folder_id}/{filename}/schema")
+def delete_extraction_schema(folder_id: str, filename: str):
+    """
+    Delete the custom extraction schema for a file.
+
+    After deletion, the default schema will be used for extraction.
+
+    Args:
+        folder_id: The folder containing the file
+        filename: The file to delete the schema for
+
+    Returns:
+        Confirmation of schema deletion
+    """
+    try:
+        deleted = storage_service.delete_extraction_schema(folder_id, filename)
+
+        if deleted:
+            return {
+                "message": "Custom schema deleted successfully",
+                "filename": filename,
+            }
+        else:
+            return {
+                "message": "No custom schema found to delete",
+                "filename": filename,
+            }
+
+    except Exception as e:
+        print(f"Error deleting extraction schema: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Phase 3: Extract with custom schema endpoint
+# ============================================================================
+
+
+@router.post("/{folder_id}/{filename}/extract")
+def extract_transactions(folder_id: str, filename: str, use_custom_schema: bool = True):
+    """
+    Extract transactions from a parsed document using the stored schema.
+
+    This is the second step in the two-phase workflow:
+    1. Parse: Convert PDF to markdown/chunks (done previously)
+    2. Extract: Extract structured data using a schema (this endpoint)
+
+    Args:
+        folder_id: The folder containing the file
+        filename: The file to extract from
+        use_custom_schema: If True, use custom schema if available; otherwise use default
+
+    Returns:
+        Extraction results including transaction count and CSV filename
+    """
+    try:
+        # Check if parsed data exists
+        parsed_data = storage_service.get_parsed_output(folder_id, filename)
+        if not parsed_data:
+            raise HTTPException(
+                status_code=404,
+                detail="Parsed data not found. Please parse the file first using POST /parse",
+            )
+
+        # Get the schema to use
+        schema = None
+        used_custom_schema = False
+
+        if use_custom_schema:
+            schema = storage_service.get_extraction_schema(folder_id, filename)
+            if schema:
+                used_custom_schema = True
+                print(f"Using custom schema for extraction: {filename}")
+
+        if not schema:
+            schema = pydantic_to_json_schema(BankStatementFieldExtractionSchema)
+            print(f"Using default schema for extraction: {filename}")
+
+        # Initialize the ADE client
+        client = get_ade_client()
+
+        _update_progress(
+            folder_id, filename, "Extracting", "Extracting transactions...", 50
+        )
+
+        # Extract transactions and convert to CSV
+        # Use dynamic extraction for custom schemas to respect user's field selection
+        if used_custom_schema:
+            # Extract as raw dicts for dynamic CSV generation
+            all_transactions = extract_transactions_as_dicts(
+                parsed_data, client, schema
+            )
+            print(f"Total extracted {len(all_transactions)} transactions (dynamic)")
+
+            # Convert to CSV dynamically based on schema fields
+            csv_content = convert_dynamic_extraction_to_csv(all_transactions, schema)
+            transactions_count = len(all_transactions)
+        else:
+            # Use original flow with Pydantic models for default schema
+            all_transactions = extract_transactions_from_parsed_data(
+                parsed_data, client, schema
+            )
+
+            # Create final extraction object with all transactions
+            extraction = BankStatementFieldExtractionSchema(
+                transactions=all_transactions
+            )
+            print(f"Total extracted {len(extraction.transactions)} transactions")
+
+            # Convert to CSV
+            csv_content = convert_extraction_to_csv(extraction)
+            transactions_count = len(extraction.transactions)
+
+        # Save CSV
+        csv_filename = f"{filename}.csv"
+        storage_service.save_processed_file(folder_id, csv_filename, csv_content)
+
+        _clear_progress(folder_id, filename)
+
+        return {
+            "message": "Extraction completed successfully",
+            "output_file": csv_filename,
+            "transactions_count": transactions_count,
+            "used_custom_schema": used_custom_schema,
+            "csv_content": csv_content,  # Include CSV content in response for immediate use
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error extracting transactions: {e}")
+        _clear_progress(folder_id, filename)
         raise HTTPException(status_code=500, detail=str(e))

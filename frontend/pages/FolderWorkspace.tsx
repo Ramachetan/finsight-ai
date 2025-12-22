@@ -9,11 +9,11 @@ import ProcessingProgress from '../components/ProcessingProgress.tsx';
 import { Button } from '../components/ui/Button.tsx';
 import { Spinner } from '../components/ui/Spinner.tsx';
 import { Skeleton } from '../components/ui/Skeleton.tsx';
-import { Home, ChevronRight, FileText, Download, Eye, Trash2, CheckCircle, AlertCircle, Clock } from 'lucide-react';
+import { Home, ChevronRight, FileText, Download, Eye, Trash2, CheckCircle, AlertCircle, Clock, FileSearch } from 'lucide-react';
 import { Modal } from '../components/ui/Modal.tsx';
 // Removed Info/metadata preview as markdown is available in the Preview page
 
-type ProcessingStatus = 'idle' | 'processing' | 'processed' | 'error';
+type ProcessingStatus = 'idle' | 'parsing' | 'parsed' | 'extracted' | 'error';
 
 // Removed FileMetadata type and related Info modal state
 
@@ -23,7 +23,7 @@ const FolderWorkspace: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [processingStatus, setProcessingStatus] = useState<{ [filename: string]: ProcessingStatus }>({});
-  const [processingFile, setProcessingFile] = useState<string | null>(null);
+  const [parsingFile, setParsingFile] = useState<string | null>(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [fileToDelete, setFileToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -39,9 +39,17 @@ const FolderWorkspace: React.FC = () => {
       const data = await api.getFolderDetails(folderId);
       setFolder(data);
 
+      // Check both parsed and processed status for each file
       const statusPromises = data.files.map(async (filename) => {
-        const isProcessed = await api.isProcessed(folderId, filename);
-        return { filename, status: isProcessed ? 'processed' : 'idle' } as const;
+        const isExtracted = await api.isProcessed(folderId, filename);
+        if (isExtracted) {
+          return { filename, status: 'extracted' as const };
+        }
+        const isParsed = await api.isParsed(folderId, filename);
+        if (isParsed) {
+          return { filename, status: 'parsed' as const };
+        }
+        return { filename, status: 'idle' as const };
       });
 
       const statuses = await Promise.all(statusPromises);
@@ -82,19 +90,23 @@ const FolderWorkspace: React.FC = () => {
     if (!folderId) return;
 
     // Show progress immediately
-    setProcessingFile(filename);
-    setProcessingStatus(prev => ({ ...prev, [filename]: 'processing' }));
+    setParsingFile(filename);
+    setProcessingStatus(prev => ({ ...prev, [filename]: 'parsing' }));
 
-    // Start processing in background (don't await)
-    api.startProcessing(folderId, filename).then(() => {
-      setProcessingStatus(prev => ({ ...prev, [filename]: 'processed' }));
-      addToast({ message: `Analysis complete for ${filename}.`, type: 'success' });
-    }).catch((error: any) => {
+    try {
+      // Call parse endpoint (not the combined process endpoint)
+      await api.parseFile(folderId, filename);
+      setProcessingStatus(prev => ({ ...prev, [filename]: 'parsed' }));
+      addToast({ message: `Parsing complete for ${filename}. Ready for schema review.`, type: 'success' });
+
+      // Navigate to preview page for schema editing and extraction
+      navigate(`/folder/${folderId}/preview/${encodeURIComponent(filename)}`);
+    } catch (error: any) {
       setProcessingStatus(prev => ({ ...prev, [filename]: 'error' }));
-      addToast({ message: error.detail?.[0]?.msg || `Analysis failed for ${filename}.`, type: 'error' });
-    }).finally(() => {
-      setProcessingFile(null);
-    });
+      addToast({ message: error.detail?.[0]?.msg || `Parsing failed for ${filename}.`, type: 'error' });
+    } finally {
+      setParsingFile(null);
+    }
   };
 
   const handleDownload = async (filename: string) => {
@@ -153,16 +165,22 @@ const FolderWorkspace: React.FC = () => {
 
   const getStatusBadge = (status: ProcessingStatus) => {
     switch (status) {
-      case 'processing':
+      case 'parsing':
         return (
           <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-            <Spinner size="sm" className="mr-1.5" /> Processing
+            <Spinner size="sm" className="mr-1.5" /> Parsing
           </span>
         );
-      case 'processed':
+      case 'parsed':
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+            <FileSearch size={12} className="mr-1.5" /> Ready for Extraction
+          </span>
+        );
+      case 'extracted':
         return (
           <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-            <CheckCircle size={12} className="mr-1.5" /> Completed
+            <CheckCircle size={12} className="mr-1.5" /> Extracted
           </span>
         );
       case 'error':
@@ -174,7 +192,7 @@ const FolderWorkspace: React.FC = () => {
       default:
         return (
           <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary-100 text-secondary-800">
-            <Clock size={12} className="mr-1.5" /> Ready to Analyze
+            <Clock size={12} className="mr-1.5" /> Ready to Parse
           </span>
         );
     }
@@ -183,9 +201,17 @@ const FolderWorkspace: React.FC = () => {
   const renderActionButton = (filename: string) => {
     const status = processingStatus[filename] || 'idle';
     switch (status) {
-      case 'processing':
-        return <Button size="sm" disabled className="opacity-75">Analyzing...</Button>;
-      case 'processed':
+      case 'parsing':
+        return <Button size="sm" disabled className="opacity-75">Parsing...</Button>;
+      case 'parsed':
+        return (
+          <div className="flex gap-2 justify-end">
+            <Button size="sm" onClick={() => handlePreview(filename)}>
+              <Eye size={16} className="mr-2" />Review & Extract
+            </Button>
+          </div>
+        );
+      case 'extracted':
         return (
           <div className="flex gap-2 justify-end">
             <Button size="sm" variant="secondary" onClick={() => handlePreview(filename)}>
@@ -194,17 +220,18 @@ const FolderWorkspace: React.FC = () => {
             <Button size="sm" onClick={() => handleDownload(filename)}>
               <Download size={16} className="mr-2" />Download
             </Button>
-            {/* Info button removed; Markdown is available in the Preview page */}
           </div>
         );
       case 'error':
         return (
-          <Button size="sm" variant="danger" onClick={() => handleAnalyze(filename)}>Retry</Button>
+          <Button size="sm" variant="danger" onClick={() => handleAnalyze(filename)}>Retry Parse</Button>
         );
       case 'idle':
       default:
         return (
-          <Button size="sm" onClick={() => handleAnalyze(filename)}>Analyze</Button>
+          <Button size="sm" onClick={() => handleAnalyze(filename)}>
+            <FileSearch size={16} className="mr-2" />Parse
+          </Button>
         );
     }
   };
@@ -267,12 +294,12 @@ const FolderWorkspace: React.FC = () => {
                           <div className="flex-1 min-w-0">
                             <h3 className="font-medium text-secondary-900 break-all">{filename}</h3>
                             <div className="mt-2">
-                              {processingFile === filename ? (
+                              {parsingFile === filename ? (
                                 <ProcessingProgress
                                   folderId={folderId!}
                                   filename={filename}
                                   onComplete={() => {
-                                    setProcessingFile(null);
+                                    setParsingFile(null);
                                   }}
                                 />
                               ) : (

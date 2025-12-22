@@ -48,3 +48,31 @@ export interface FileMetadata {
   chunk_types: Record<string, number>;
   chunks: ParsedChunk[];
 }
+
+// Schema response from /process/{folder_id}/{filename}/schema
+export interface SchemaResponse {
+  schema: Record<string, unknown>;
+  is_custom: boolean;
+  message: string;
+}
+
+// Parse response from /process/{folder_id}/{filename}/parse
+export interface ParseResponse {
+  message: string;
+  filename: string;
+  chunks_count: number;
+  pages_count: number;
+  pages: number[];
+  has_markdown: boolean;
+  chunk_types: Record<string, number>;
+  used_cache: boolean;
+}
+
+// Extract response from /process/{folder_id}/{filename}/extract
+export interface ExtractResponse {
+  message: string;
+  output_file: string;
+  transactions_count: number;
+  used_custom_schema: boolean;
+  csv_content: string;
+}

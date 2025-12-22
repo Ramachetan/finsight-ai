@@ -74,13 +74,36 @@ class StorageBackend(ABC):
         pass
 
     @abstractmethod
-    def save_parsed_output(self, folder_id: str, filename: str, parsed_data: Dict[str, Any]) -> str:
+    def save_parsed_output(
+        self, folder_id: str, filename: str, parsed_data: Dict[str, Any]
+    ) -> str:
         """Save the raw parsed output (markdown + chunks) for later reprocessing."""
         pass
 
     @abstractmethod
-    def get_parsed_output(self, folder_id: str, filename: str) -> Optional[Dict[str, Any]]:
+    def get_parsed_output(
+        self, folder_id: str, filename: str
+    ) -> Optional[Dict[str, Any]]:
         """Retrieve previously saved parsed output. Returns None if not found."""
+        pass
+
+    @abstractmethod
+    def save_extraction_schema(
+        self, folder_id: str, filename: str, schema: Dict[str, Any]
+    ) -> str:
+        """Save a custom extraction schema for a specific file."""
+        pass
+
+    @abstractmethod
+    def get_extraction_schema(
+        self, folder_id: str, filename: str
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve custom extraction schema for a file. Returns None if not found."""
+        pass
+
+    @abstractmethod
+    def delete_extraction_schema(self, folder_id: str, filename: str) -> bool:
+        """Delete custom extraction schema for a file. Returns True if deleted."""
         pass
 
 
@@ -143,9 +166,9 @@ class GCSBackend(StorageBackend):
                 "id": folder_id,
                 "name": name,
                 "status": status,
-                "fileCount": 0
+                "fileCount": 0,
             }
-        
+
         # 2. Count files from uploads/
         # We list all blobs under uploads/ to avoid N API calls
         upload_blobs = self.client.list_blobs(self.bucket_name, prefix="uploads/")
@@ -273,37 +296,43 @@ class GCSBackend(StorageBackend):
             upload_blob = self.bucket.blob(f"uploads/{folder_id}/{filename}")
             if upload_blob.exists():
                 upload_blob.delete()
-            
+
             # Delete the processed CSV if it exists
             processed_blob = self.bucket.blob(f"processed/{folder_id}/{filename}.csv")
             if processed_blob.exists():
                 processed_blob.delete()
-            
+
             # Delete the parsed output if it exists
             parsed_blob = self.bucket.blob(f"parsed/{folder_id}/{filename}.json")
             if parsed_blob.exists():
                 parsed_blob.delete()
-            
+
             # Check if folder still has files and update status
             remaining_files = self.list_files(folder_id)
             new_status = "HAS_FILES" if remaining_files else "EMPTY"
             self._update_status(folder_id, new_status)
-            
+
             return True
         except Exception as e:
             print(f"Error deleting file: {e}")
             return False
 
-    def save_parsed_output(self, folder_id: str, filename: str, parsed_data: Dict[str, Any]) -> str:
+    def save_parsed_output(
+        self, folder_id: str, filename: str, parsed_data: Dict[str, Any]
+    ) -> str:
         """Save the raw parsed output (markdown + chunks) for later reprocessing."""
         if not self.bucket:
             raise HTTPException(status_code=500, detail="Storage service unavailable")
 
         blob = self.bucket.blob(f"parsed/{folder_id}/{filename}.json")
-        blob.upload_from_string(json.dumps(parsed_data, ensure_ascii=False), content_type="application/json")
+        blob.upload_from_string(
+            json.dumps(parsed_data, ensure_ascii=False), content_type="application/json"
+        )
         return blob.name
 
-    def get_parsed_output(self, folder_id: str, filename: str) -> Optional[Dict[str, Any]]:
+    def get_parsed_output(
+        self, folder_id: str, filename: str
+    ) -> Optional[Dict[str, Any]]:
         """Retrieve previously saved parsed output. Returns None if not found."""
         if not self.bucket:
             return None
@@ -318,6 +347,53 @@ class GCSBackend(StorageBackend):
         except Exception as e:
             print(f"Error reading parsed output: {e}")
             return None
+
+    def save_extraction_schema(
+        self, folder_id: str, filename: str, schema: Dict[str, Any]
+    ) -> str:
+        """Save a custom extraction schema for a specific file."""
+        if not self.bucket:
+            raise HTTPException(status_code=500, detail="Storage service unavailable")
+
+        blob = self.bucket.blob(f"schemas/{folder_id}/{filename}.json")
+        blob.upload_from_string(
+            json.dumps(schema, ensure_ascii=False, indent=2),
+            content_type="application/json",
+        )
+        return blob.name
+
+    def get_extraction_schema(
+        self, folder_id: str, filename: str
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve custom extraction schema for a file. Returns None if not found."""
+        if not self.bucket:
+            return None
+
+        blob = self.bucket.blob(f"schemas/{folder_id}/{filename}.json")
+        if not blob.exists():
+            return None
+
+        try:
+            content = blob.download_as_text()
+            return json.loads(content)
+        except Exception as e:
+            print(f"Error reading extraction schema: {e}")
+            return None
+
+    def delete_extraction_schema(self, folder_id: str, filename: str) -> bool:
+        """Delete custom extraction schema for a file. Returns True if deleted."""
+        if not self.bucket:
+            return False
+
+        try:
+            blob = self.bucket.blob(f"schemas/{folder_id}/{filename}.json")
+            if blob.exists():
+                blob.delete()
+                return True
+            return False
+        except Exception as e:
+            print(f"Error deleting extraction schema: {e}")
+            return False
 
     def _update_status(self, folder_id: str, new_status: str):
         try:
@@ -525,28 +601,30 @@ class LocalBackend(StorageBackend):
             upload_path = self._get_uploads_path(folder_id) / filename
             if upload_path.exists():
                 upload_path.unlink()
-            
+
             # Delete the processed CSV if it exists
             processed_path = self._get_processed_path(folder_id) / f"{filename}.csv"
             if processed_path.exists():
                 processed_path.unlink()
-            
+
             # Delete the parsed output if it exists
             parsed_path = self._get_parsed_path(folder_id) / f"{filename}.json"
             if parsed_path.exists():
                 parsed_path.unlink()
-            
+
             # Check if folder still has files and update status
             remaining_files = self.list_files(folder_id)
             new_status = "HAS_FILES" if remaining_files else "EMPTY"
             self._update_status(folder_id, new_status)
-            
+
             return True
         except Exception as e:
             print(f"Error deleting file: {e}")
             return False
 
-    def save_parsed_output(self, folder_id: str, filename: str, parsed_data: Dict[str, Any]) -> str:
+    def save_parsed_output(
+        self, folder_id: str, filename: str, parsed_data: Dict[str, Any]
+    ) -> str:
         """Save the raw parsed output (markdown + chunks) for later reprocessing."""
         parsed_dir = self._get_parsed_path(folder_id)
         parsed_dir.mkdir(parents=True, exist_ok=True)
@@ -556,7 +634,9 @@ class LocalBackend(StorageBackend):
             json.dump(parsed_data, f, ensure_ascii=False)
         return str(target_path)
 
-    def get_parsed_output(self, folder_id: str, filename: str) -> Optional[Dict[str, Any]]:
+    def get_parsed_output(
+        self, folder_id: str, filename: str
+    ) -> Optional[Dict[str, Any]]:
         """Retrieve previously saved parsed output. Returns None if not found."""
         path = self._get_parsed_path(folder_id) / f"{filename}.json"
         if not path.exists():
@@ -568,6 +648,48 @@ class LocalBackend(StorageBackend):
         except Exception as e:
             print(f"Error reading parsed output: {e}")
             return None
+
+    def _get_schemas_path(self, folder_id: str) -> Path:
+        return self.base_path / "schemas" / folder_id
+
+    def save_extraction_schema(
+        self, folder_id: str, filename: str, schema: Dict[str, Any]
+    ) -> str:
+        """Save a custom extraction schema for a specific file."""
+        schemas_dir = self._get_schemas_path(folder_id)
+        schemas_dir.mkdir(parents=True, exist_ok=True)
+        target_path = schemas_dir / f"{filename}.json"
+
+        with open(target_path, "w", encoding="utf-8") as f:
+            json.dump(schema, f, ensure_ascii=False, indent=2)
+        return str(target_path)
+
+    def get_extraction_schema(
+        self, folder_id: str, filename: str
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve custom extraction schema for a file. Returns None if not found."""
+        path = self._get_schemas_path(folder_id) / f"{filename}.json"
+        if not path.exists():
+            return None
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error reading extraction schema: {e}")
+            return None
+
+    def delete_extraction_schema(self, folder_id: str, filename: str) -> bool:
+        """Delete custom extraction schema for a file. Returns True if deleted."""
+        path = self._get_schemas_path(folder_id) / f"{filename}.json"
+        if path.exists():
+            try:
+                path.unlink()
+                return True
+            except Exception as e:
+                print(f"Error deleting extraction schema: {e}")
+                return False
+        return False
 
     def _update_status(self, folder_id: str, new_status: str):
         path = self._get_metadata_path(folder_id)
@@ -642,8 +764,25 @@ class StorageService:
     def delete_file(self, folder_id: str, filename: str) -> bool:
         return self.backend.delete_file(folder_id, filename)
 
-    def save_parsed_output(self, folder_id: str, filename: str, parsed_data: Dict[str, Any]) -> str:
+    def save_parsed_output(
+        self, folder_id: str, filename: str, parsed_data: Dict[str, Any]
+    ) -> str:
         return self.backend.save_parsed_output(folder_id, filename, parsed_data)
 
-    def get_parsed_output(self, folder_id: str, filename: str) -> Optional[Dict[str, Any]]:
+    def get_parsed_output(
+        self, folder_id: str, filename: str
+    ) -> Optional[Dict[str, Any]]:
         return self.backend.get_parsed_output(folder_id, filename)
+
+    def save_extraction_schema(
+        self, folder_id: str, filename: str, schema: Dict[str, Any]
+    ) -> str:
+        return self.backend.save_extraction_schema(folder_id, filename, schema)
+
+    def get_extraction_schema(
+        self, folder_id: str, filename: str
+    ) -> Optional[Dict[str, Any]]:
+        return self.backend.get_extraction_schema(folder_id, filename)
+
+    def delete_extraction_schema(self, folder_id: str, filename: str) -> bool:
+        return self.backend.delete_extraction_schema(folder_id, filename)

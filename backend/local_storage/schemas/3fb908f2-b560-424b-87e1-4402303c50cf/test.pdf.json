@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "properties": {
+    "custom_field": {
+      "type": "string"
+    }
+  }
+}
