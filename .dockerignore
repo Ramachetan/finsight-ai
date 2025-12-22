@@ -1,0 +1,9 @@
+node_modules
+frontend/dist
+backend/__pycache__
+backend/.pytest_cache
+backend/htmlcov
+backend/local_storage
+*.pyc
+.env
+.DS_Store

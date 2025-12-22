@@ -1,7 +1,9 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path
 
 from app.routers import folders, process
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(
     title="Credit Evaluation Engine",
@@ -19,5 +21,11 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(folders.router)
-app.include_router(process.router)
+app.include_router(folders.router, prefix="/api")
+app.include_router(process.router, prefix="/api")
+
+# Serve static files (built React app)
+# Mount this AFTER API routes to avoid conflicts
+static_dir = Path(__file__).parent.parent / "frontend" / "dist"
+if static_dir.exists():
+    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
