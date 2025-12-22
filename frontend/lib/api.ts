@@ -1,6 +1,6 @@
 
 import axios, { AxiosError } from 'axios';
-import { Folder, FolderDetails, ApiError } from '../types.ts';
+import { Folder, FolderDetails, ApiError, FileMetadata } from '../types.ts';
 import { API_BASE_URL } from '../constants.ts';
 
 const apiClient = axios.create({
@@ -94,9 +94,9 @@ export const deleteFile = async (folderId: string, filename: string): Promise<vo
   await apiClient.delete(`/folders/${folderId}/files/${encodedFilename}`);
 };
 
-export const getFileMetadata = async (folderId: string, filename: string): Promise<any> => {
+export const getFileMetadata = async (folderId: string, filename: string): Promise<FileMetadata> => {
   const encodedFilename = encodeURIComponent(filename);
-  const { data } = await apiClient.get(`/process/${folderId}/${encodedFilename}/metadata`);
+  const { data } = await apiClient.get<FileMetadata>(`/process/${folderId}/${encodedFilename}/metadata`);
   return data;
 };
 

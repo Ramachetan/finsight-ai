@@ -467,16 +467,55 @@ def process_file(folder_id: str, filename: str, force_reparse: bool = False):
                 raise ValueError("No markdown content returned from parsing")
 
             # Convert chunks to serializable format for caching
+            # New ADE API uses: id (not chunk_id), type, grounding.box, grounding.page
             chunks_data = []
             if parse_response.chunks:
                 for chunk in parse_response.chunks:
                     chunk_dict = {}
                     if hasattr(chunk, "markdown"):
                         chunk_dict["markdown"] = chunk.markdown
-                    if hasattr(chunk, "page_number"):
+
+                    # New API uses 'id' instead of 'chunk_id'
+                    if hasattr(chunk, "id"):
+                        chunk_dict["id"] = chunk.id
+                    elif hasattr(chunk, "chunk_id"):
+                        chunk_dict["id"] = chunk.chunk_id
+
+                    # Chunk type (text, table, etc.)
+                    if hasattr(chunk, "type"):
+                        chunk_dict["type"] = chunk.type
+
+                    # Grounding information (bounding box + page)
+                    if hasattr(chunk, "grounding") and chunk.grounding:
+                        grounding = chunk.grounding
+                        grounding_dict = {}
+
+                        # Page number from grounding
+                        if hasattr(grounding, "page"):
+                            grounding_dict["page"] = grounding.page
+                            chunk_dict["page_number"] = (
+                                grounding.page
+                            )  # Keep for backwards compatibility
+
+                        # Bounding box coordinates
+                        if hasattr(grounding, "box") and grounding.box:
+                            box = grounding.box
+                            grounding_dict["box"] = {
+                                "left": getattr(box, "left", None)
+                                or getattr(box, "l", None),
+                                "top": getattr(box, "top", None)
+                                or getattr(box, "t", None),
+                                "right": getattr(box, "right", None)
+                                or getattr(box, "r", None),
+                                "bottom": getattr(box, "bottom", None)
+                                or getattr(box, "b", None),
+                            }
+
+                        chunk_dict["grounding"] = grounding_dict
+                    elif hasattr(chunk, "page_number"):
+                        # Fallback for legacy API
                         chunk_dict["page_number"] = chunk.page_number
-                    if hasattr(chunk, "chunk_id"):
-                        chunk_dict["chunk_id"] = chunk.chunk_id
+
                     chunks_data.append(chunk_dict)
 
             # Build parsed data structure
@@ -567,16 +606,32 @@ def get_file_metadata(folder_id: str, filename: str):
                 detail="Parsed data not found. Please process the file first.",
             )
 
+        chunks = parsed_data.get("chunks", [])
+
+        # Calculate chunk type statistics
+        type_counts = {}
+        for chunk in chunks:
+            chunk_type = chunk.get("type", "unknown")
+            type_counts[chunk_type] = type_counts.get(chunk_type, 0) + 1
+
+        # Get unique pages from grounding or page_number
+        pages = set()
+        for chunk in chunks:
+            if "grounding" in chunk and "page" in chunk["grounding"]:
+                pages.add(chunk["grounding"]["page"])
+            elif "page_number" in chunk:
+                pages.add(chunk["page_number"])
+
         # Return metadata without the full markdown content to save bandwidth
         # The markdown can be fetched separately if needed
         return {
             "filename": filename,
-            "chunks_count": len(parsed_data.get("chunks", [])),
-            "pages_count": len(
-                set(c.get("page_number", 1) for c in parsed_data.get("chunks", []))
-            ),
+            "chunks_count": len(chunks),
+            "pages_count": len(pages) if pages else 1,
+            "pages": sorted(list(pages)) if pages else [0],
             "has_markdown": bool(parsed_data.get("markdown")),
-            "chunks": parsed_data.get("chunks", []),
+            "chunk_types": type_counts,
+            "chunks": chunks,
         }
     except HTTPException as e:
         raise e
