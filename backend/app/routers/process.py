@@ -3,7 +3,7 @@ import io
 import json
 import os
 import re
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from ade import Ade
 from fastapi import APIRouter, HTTPException, Response
@@ -13,6 +13,32 @@ from app.services.storage import StorageService
 
 router = APIRouter(prefix="/process", tags=["process"])
 storage_service = StorageService()
+
+# In-memory progress tracker: {folder_id/filename: {"phase": str, "message": str, "progress": int}}
+_processing_progress: Dict[str, dict] = {}
+
+
+def _get_progress_key(folder_id: str, filename: str) -> str:
+    """Generate a unique key for tracking progress of a specific file."""
+    return f"{folder_id}/{filename}"
+
+
+def _update_progress(
+    folder_id: str, filename: str, phase: str, message: str, progress: int = 0
+):
+    """Update progress tracking for a file being processed."""
+    key = _get_progress_key(folder_id, filename)
+    _processing_progress[key] = {
+        "phase": phase,
+        "message": message,
+        "progress": min(progress, 100),
+    }
+
+
+def _clear_progress(folder_id: str, filename: str):
+    """Clear progress tracking after processing completes."""
+    key = _get_progress_key(folder_id, filename)
+    _processing_progress.pop(key, None)
 
 
 def normalize_amount(value: str) -> str:
@@ -445,9 +471,16 @@ def process_file(folder_id: str, filename: str, force_reparse: bool = False):
             if parsed_data:
                 print(f"Using cached parsed output for: {filename}")
                 used_cache = True
+                _update_progress(
+                    folder_id, filename, "Parsing", "Using cached parse (faster!)", 50
+                )
 
         # Parse the document if no cache available
         if not parsed_data:
+            _update_progress(
+                folder_id, filename, "Parsing", "Reading and converting document...", 10
+            )
+
             # Get file content as bytes
             file_content = storage_service.read_file_content(folder_id, filename)
 
@@ -534,6 +567,9 @@ def process_file(folder_id: str, filename: str, force_reparse: bool = False):
 
         # Step 2: Extract structured data using our schema
         print("Extracting structured data...")
+        _update_progress(
+            folder_id, filename, "Extracting", "Extracting transactions...", 75
+        )
         all_transactions = extract_transactions_from_parsed_data(
             parsed_data, client, schema
         )
@@ -548,6 +584,9 @@ def process_file(folder_id: str, filename: str, force_reparse: bool = False):
         # Save CSV
         csv_filename = f"{filename}.csv"
         storage_service.save_processed_file(folder_id, csv_filename, csv_content)
+
+        # Clear progress tracking when done
+        _clear_progress(folder_id, filename)
 
         return {
             "message": "File processed successfully",
@@ -567,7 +606,26 @@ def process_file(folder_id: str, filename: str, force_reparse: bool = False):
 
     except Exception as e:
         print(f"Error processing file: {e}")
+        _clear_progress(folder_id, filename)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{folder_id}/{filename}/status")
+def get_processing_status(folder_id: str, filename: str):
+    """
+    Get the current processing status for a file.
+    Returns the phase, message, and progress percentage.
+    If not processing, returns None.
+    """
+    key = _get_progress_key(folder_id, filename)
+    status = _processing_progress.get(key)
+
+    if status:
+        return status
+
+    # If not found, check if the file has already been processed
+    # (no longer in progress)
+    return {"phase": None, "message": "Not processing", "progress": 0}
 
 
 @router.api_route("/{folder_id}/{filename}/download", methods=["GET", "HEAD"])

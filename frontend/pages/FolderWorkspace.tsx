@@ -5,6 +5,7 @@ import { FolderDetails as FolderDetailsType } from '../types.ts';
 import * as api from '../lib/api.ts';
 import { useToast } from '../hooks/useToast.tsx';
 import FileUploader from '../components/FileUploader.tsx';
+import ProcessingProgress from '../components/ProcessingProgress.tsx';
 import { Button } from '../components/ui/Button.tsx';
 import { Spinner } from '../components/ui/Spinner.tsx';
 import { Skeleton } from '../components/ui/Skeleton.tsx';
@@ -22,6 +23,7 @@ const FolderWorkspace: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [processingStatus, setProcessingStatus] = useState<{ [filename: string]: ProcessingStatus }>({});
+  const [processingFile, setProcessingFile] = useState<string | null>(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [fileToDelete, setFileToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -78,15 +80,21 @@ const FolderWorkspace: React.FC = () => {
 
   const handleAnalyze = async (filename: string) => {
     if (!folderId) return;
+
+    // Show progress immediately
+    setProcessingFile(filename);
     setProcessingStatus(prev => ({ ...prev, [filename]: 'processing' }));
-    try {
-      await api.startProcessing(folderId, filename);
+
+    // Start processing in background (don't await)
+    api.startProcessing(folderId, filename).then(() => {
       setProcessingStatus(prev => ({ ...prev, [filename]: 'processed' }));
       addToast({ message: `Analysis complete for ${filename}.`, type: 'success' });
-    } catch (error: any) {
+    }).catch((error: any) => {
       setProcessingStatus(prev => ({ ...prev, [filename]: 'error' }));
       addToast({ message: error.detail?.[0]?.msg || `Analysis failed for ${filename}.`, type: 'error' });
-    }
+    }).finally(() => {
+      setProcessingFile(null);
+    });
   };
 
   const handleDownload = async (filename: string) => {
@@ -252,14 +260,24 @@ const FolderWorkspace: React.FC = () => {
                   {folder.files.map(filename => (
                     <li key={filename} className="group p-4 hover:bg-secondary-50 transition-colors duration-200">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                        <div className="flex items-start gap-4">
+                        <div className="flex items-start gap-4 flex-1">
                           <div className="p-2 bg-primary-50 rounded-lg text-primary-600 group-hover:bg-primary-100 transition-colors">
                             <FileText className="w-6 h-6" />
                           </div>
-                          <div>
+                          <div className="flex-1 min-w-0">
                             <h3 className="font-medium text-secondary-900 break-all">{filename}</h3>
-                            <div className="mt-1">
-                              {getStatusBadge(processingStatus[filename] || 'idle')}
+                            <div className="mt-2">
+                              {processingFile === filename ? (
+                                <ProcessingProgress
+                                  folderId={folderId!}
+                                  filename={filename}
+                                  onComplete={() => {
+                                    setProcessingFile(null);
+                                  }}
+                                />
+                              ) : (
+                                getStatusBadge(processingStatus[filename] || 'idle')
+                              )}
                             </div>
                           </div>
                         </div>

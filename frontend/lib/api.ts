@@ -63,6 +63,12 @@ export const startProcessing = async (folderId: string, filename: string): Promi
   await apiClient.post(`/process/${folderId}/${filename}`);
 };
 
+export const getProcessingStatus = async (folderId: string, filename: string) => {
+  const encodedFilename = encodeURIComponent(filename);
+  const { data } = await apiClient.get(`/process/${folderId}/${encodedFilename}/status`);
+  return data;
+};
+
 export const downloadResult = async (folderId: string, filename: string): Promise<Blob> => {
   const response = await apiClient.get(`/process/${folderId}/${filename}/download`, {
     responseType: 'blob',
