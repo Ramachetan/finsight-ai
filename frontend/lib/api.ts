@@ -93,3 +93,15 @@ export const deleteFile = async (folderId: string, filename: string): Promise<vo
   const encodedFilename = encodeURIComponent(filename);
   await apiClient.delete(`/folders/${folderId}/files/${encodedFilename}`);
 };
+
+export const getFileMetadata = async (folderId: string, filename: string): Promise<any> => {
+  const encodedFilename = encodeURIComponent(filename);
+  const { data } = await apiClient.get(`/process/${folderId}/${encodedFilename}/metadata`);
+  return data;
+};
+
+export const getFileMarkdown = async (folderId: string, filename: string): Promise<string> => {
+  const encodedFilename = encodeURIComponent(filename);
+  const { data } = await apiClient.get(`/process/${folderId}/${encodedFilename}/markdown`);
+  return data;
+};

@@ -10,8 +10,11 @@ import { Spinner } from '../components/ui/Spinner.tsx';
 import { Skeleton } from '../components/ui/Skeleton.tsx';
 import { Home, ChevronRight, FileText, Download, Eye, Trash2, CheckCircle, AlertCircle, Clock } from 'lucide-react';
 import { Modal } from '../components/ui/Modal.tsx';
+// Removed Info/metadata preview as markdown is available in the Preview page
 
 type ProcessingStatus = 'idle' | 'processing' | 'processed' | 'error';
+
+// Removed FileMetadata type and related Info modal state
 
 const FolderWorkspace: React.FC = () => {
   const { folderId } = useParams<{ folderId: string }>();
@@ -22,6 +25,9 @@ const FolderWorkspace: React.FC = () => {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [fileToDelete, setFileToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Info modal removed
+
   const { addToast } = useToast();
   const navigate = useNavigate();
 
@@ -133,6 +139,10 @@ const FolderWorkspace: React.FC = () => {
     setFileToDelete(null);
   };
 
+  // Removed metadata fetching/view logic
+
+  // Removed metadata modal close handler
+
   const getStatusBadge = (status: ProcessingStatus) => {
     switch (status) {
       case 'processing':
@@ -176,6 +186,7 @@ const FolderWorkspace: React.FC = () => {
             <Button size="sm" onClick={() => handleDownload(filename)}>
               <Download size={16} className="mr-2" />Download
             </Button>
+            {/* Info button removed; Markdown is available in the Preview page */}
           </div>
         );
       case 'error':
@@ -337,6 +348,8 @@ const FolderWorkspace: React.FC = () => {
           </div>
         </div>
       </Modal>
+
+      {/* Info/Metadata modal removed */}
     </div>
   );
 };
