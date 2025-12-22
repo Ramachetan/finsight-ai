@@ -1,0 +1,42 @@
+{
+  "type": "object",
+  "properties": {
+    "transactions": {
+      "type": "array",
+      "description": "List of individual transaction records from the statement tables.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "description": "Date of the transaction (e.g., DD/MM/YYYY)",
+            "default": ""
+          },
+          "amount": {
+            "type": "string",
+            "description": "Transaction amount with sign (+/-)",
+            "default": ""
+          },
+          "balance": {
+            "type": "string",
+            "description": "Account balance after transaction",
+            "default": ""
+          },
+          "remarks": {
+            "type": "string",
+            "description": "Description or narration of the transaction",
+            "default": ""
+          }
+        },
+        "required": [
+          "date",
+          "amount"
+        ]
+      }
+    }
+  },
+  "required": [
+    "transactions"
+  ],
+  "$defs": {}
+}

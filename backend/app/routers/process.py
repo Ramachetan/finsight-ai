@@ -513,20 +513,29 @@ def extract_transactions(folder_id: str, filename: str, use_custom_schema: bool 
             print(f"Using default schema for extraction: {filename}")
 
         progress_tracker.update(
-            folder_id, filename, "Extracting", "Extracting transactions...", 50
+            folder_id, filename, "Extracting", "Starting extraction...", 10
         )
 
         # Extract transactions and convert to CSV
         # Use dynamic extraction for custom schemas to respect user's field selection
         if used_custom_schema:
+            progress_tracker.update(
+                folder_id, filename, "Extracting", "Extracting with custom schema...", 40
+            )
             all_transactions = extraction_service.extract_transactions_as_dicts(
                 parsed_data, schema
             )
             print(f"Total extracted {len(all_transactions)} transactions (dynamic)")
 
+            progress_tracker.update(
+                folder_id, filename, "Extracting", "Generating CSV...", 80
+            )
             csv_content = convert_dict_transactions_to_csv(all_transactions, schema)
             transactions_count = len(all_transactions)
         else:
+            progress_tracker.update(
+                folder_id, filename, "Extracting", "Extracting with default schema...", 40
+            )
             all_transactions = extraction_service.extract_transactions_from_parsed(
                 parsed_data, schema
             )
@@ -536,10 +545,16 @@ def extract_transactions(folder_id: str, filename: str, use_custom_schema: bool 
             )
             print(f"Total extracted {len(extraction.transactions)} transactions")
 
+            progress_tracker.update(
+                folder_id, filename, "Extracting", "Generating CSV...", 80
+            )
             csv_content = convert_transactions_to_csv(extraction)
             transactions_count = len(extraction.transactions)
 
         # Save CSV
+        progress_tracker.update(
+            folder_id, filename, "Extracting", "Saving results...", 95
+        )
         csv_filename = f"{filename}.csv"
         storage_service.save_processed_file(folder_id, csv_filename, csv_content)
 

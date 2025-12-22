@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Button } from './ui/Button.tsx';
 import { Spinner } from './ui/Spinner.tsx';
 import { Modal } from './ui/Modal.tsx';
+import ProcessingProgress from './ProcessingProgress.tsx';
 import { ExtractResponse } from '../types.ts';
 import {
     getExtractionSchema,
@@ -243,19 +244,24 @@ export default function SchemaEditorTable({
         }
 
         setIsExtracting(true);
-        try {
-            const result = await extractTransactions(folderId, filename, true);
-            addToast({
-                message: `Successfully extracted ${result.transactions_count} transactions`,
-                type: 'success'
+        // Note: We don't await here because we want to show progress immediately
+        // The actual API call happens, and the ProcessingProgress component polls for status
+        extractTransactions(folderId, filename, true)
+            .then(result => {
+                addToast({
+                    message: `Successfully extracted ${result.transactions_count} transactions`,
+                    type: 'success'
+                });
+                onExtractionComplete?.(result);
+            })
+            .catch(error => {
+                console.error('Error extracting:', error);
+                addToast({ message: 'Extraction failed. Please try again.', type: 'error' });
+            })
+            .finally(() => {
+                // We keep isExtracting true for a moment to let the progress bar finish
+                setTimeout(() => setIsExtracting(false), 1000);
             });
-            onExtractionComplete?.(result);
-        } catch (error) {
-            console.error('Error extracting:', error);
-            addToast({ message: 'Extraction failed. Please try again.', type: 'error' });
-        } finally {
-            setIsExtracting(false);
-        }
     };
 
     // Handle save and proceed with extraction
@@ -264,19 +270,21 @@ export default function SchemaEditorTable({
         await handleSave();
 
         setIsExtracting(true);
-        try {
-            const result = await extractTransactions(folderId, filename, true);
-            addToast({
-                message: `Successfully extracted ${result.transactions_count} transactions`,
-                type: 'success'
+        extractTransactions(folderId, filename, true)
+            .then(result => {
+                addToast({
+                    message: `Successfully extracted ${result.transactions_count} transactions`,
+                    type: 'success'
+                });
+                onExtractionComplete?.(result);
+            })
+            .catch(error => {
+                console.error('Error extracting:', error);
+                addToast({ message: 'Extraction failed. Please try again.', type: 'error' });
+            })
+            .finally(() => {
+                setTimeout(() => setIsExtracting(false), 1000);
             });
-            onExtractionComplete?.(result);
-        } catch (error) {
-            console.error('Error extracting:', error);
-            addToast({ message: 'Extraction failed. Please try again.', type: 'error' });
-        } finally {
-            setIsExtracting(false);
-        }
     };
 
     if (isLoading) {
@@ -366,6 +374,21 @@ export default function SchemaEditorTable({
                 <strong>Define extraction fields:</strong> Specify which data points to extract from the parsed document.
                 Each field will become a column in your CSV output.
             </div>
+
+            {/* Progress Bar */}
+            {isExtracting && (
+                <div className="mb-4 p-4 bg-white border border-secondary-200 rounded-lg shadow-sm">
+                    <ProcessingProgress
+                        folderId={folderId}
+                        filename={filename}
+                        onComplete={() => {
+                            // Progress component handles completion logic internally
+                            // We just need to ensure isExtracting is eventually set to false
+                            // which is handled by the API call promise chain
+                        }}
+                    />
+                </div>
+            )}
 
             {/* Field Table */}
             <div className="flex-1 overflow-auto">
@@ -523,7 +546,9 @@ export default function SchemaEditorTable({
                                         console.error('Error extracting:', error);
                                         addToast({ message: 'Extraction failed. Please try again.', type: 'error' });
                                     })
-                                    .finally(() => setIsExtracting(false));
+                                    .finally(() => {
+                                        setTimeout(() => setIsExtracting(false), 1000);
+                                    });
                             }}
                         >
                             Extract Without Saving
