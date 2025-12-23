@@ -1,8 +1,5 @@
 """Router for document processing endpoints."""
 
-import json
-from typing import Dict, Optional
-
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 

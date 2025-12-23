@@ -1,5 +1,4 @@
-
-import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 import { Toast, ToastProps } from '../components/ui/Toast.tsx';
 
 type ToastOptions = Omit<ToastProps, 'onDismiss' | 'id'>;

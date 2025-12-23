@@ -1,5 +1,3 @@
-
-import React from 'react';
 import { Routes, Route } from 'react-router-dom';
 import Dashboard from './pages/Dashboard.tsx';
 import FolderWorkspace from './pages/FolderWorkspace.tsx';
