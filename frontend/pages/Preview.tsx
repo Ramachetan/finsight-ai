@@ -192,6 +192,16 @@ const Preview: React.FC = () => {
         }
     };
 
+    const handleDownloadPdf = () => {
+        if (!pdfUrl || !filename) return;
+        const a = document.createElement('a');
+        a.href = pdfUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+    };
+
     const handleDownloadCsv = async () => {
         if (!folderId || !filename) return;
         try {
@@ -387,6 +397,14 @@ const Preview: React.FC = () => {
                                 title="Reset Zoom"
                             >
                                 <RotateCcw size={18} />
+                            </button>
+                            <div className="w-px h-6 bg-secondary-300 mx-1"></div>
+                            <button
+                                onClick={handleDownloadPdf}
+                                className="p-1.5 hover:bg-secondary-100 rounded transition-colors"
+                                title="Download PDF"
+                            >
+                                <Download size={18} />
                             </button>
                         </div>
                     </div>
