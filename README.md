@@ -49,6 +49,30 @@ Open:
 
 ## Deploy to Cloud Run
 
+### Change gcloud account (email)
+
+To switch the Google account (email) used by gcloud:
+
+```bash
+gcloud auth login
+```
+
+This will prompt you to log in with a different email address in your browser.
+
+To list all authenticated accounts:
+
+```bash
+gcloud auth list
+```
+
+To set the active account:
+
+```bash
+gcloud config set account [NEW_EMAIL]
+```
+
+Replace `[NEW_EMAIL]` with your desired email address.
+
 ### 1) Authenticate and Set Project
 ```bash
 gcloud auth login
