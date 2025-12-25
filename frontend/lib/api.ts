@@ -11,12 +11,21 @@ const apiClient = axios.create({
 apiClient.interceptors.response.use(
   response => response,
   (error: AxiosError<ApiError>) => {
-    // Handle structured API errors (e.g., 422 Unprocessable Entity)
-    if (error.response && error.response.data && Array.isArray(error.response.data.detail)) {
-      return Promise.reject(error.response.data);
+    const data = error.response?.data as any;
+
+    // Pass through FastAPI validation errors (detail is an array)
+    if (data && Array.isArray(data.detail)) {
+      return Promise.reject(data as ApiError);
     }
 
-    // Handle generic network or server errors
+    // Normalize FastAPI HTTPException(detail="...") where detail is a string
+    if (data && typeof data.detail === 'string') {
+      return Promise.reject({
+        detail: [{ msg: data.detail }],
+      } as ApiError);
+    }
+
+    // Fallback: network error or unexpected shape
     return Promise.reject({
       detail: [{ msg: error.message || 'An unexpected network error occurred.' }],
     } as ApiError);

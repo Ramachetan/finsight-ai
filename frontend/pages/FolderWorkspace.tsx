@@ -109,7 +109,7 @@ const FolderWorkspace: React.FC = () => {
     }
   };
 
-  const handleDownload = async (filename: string) => {
+  const handleDownloadCsv = async (filename: string) => {
     if (!folderId) return;
     try {
       // The backend saves processed files as {filename}.csv
@@ -124,7 +124,24 @@ const FolderWorkspace: React.FC = () => {
       a.remove();
       window.URL.revokeObjectURL(url);
     } catch (error: any) {
-      addToast({ message: error.detail?.[0]?.msg || 'Download failed.', type: 'error' });
+      addToast({ message: error.detail?.[0]?.msg || 'Download CSV failed.', type: 'error' });
+    }
+  };
+
+  const handleDownloadPdf = async (filename: string) => {
+    if (!folderId) return;
+    try {
+      const blob = await api.getOriginalFile(folderId, filename);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error: any) {
+      addToast({ message: error.detail?.[0]?.msg || 'Download PDF failed.', type: 'error' });
     }
   };
 
@@ -217,8 +234,8 @@ const FolderWorkspace: React.FC = () => {
             <Button size="sm" variant="secondary" onClick={() => handlePreview(filename)}>
               <Eye size={16} className="mr-2" />Preview
             </Button>
-            <Button size="sm" onClick={() => handleDownload(filename)}>
-              <Download size={16} className="mr-2" />Download
+            <Button size="sm" onClick={() => handleDownloadCsv(filename)}>
+              <Download size={16} className="mr-2" />CSV
             </Button>
           </div>
         );
@@ -311,6 +328,13 @@ const FolderWorkspace: React.FC = () => {
 
                         <div className="flex items-center gap-2 self-end sm:self-center">
                           {renderActionButton(filename)}
+                          <button
+                            onClick={() => handleDownloadPdf(filename)}
+                            className="p-2 text-secondary-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-all"
+                            title="PDF"
+                          >
+                            <Download size={18} />
+                          </button>
                           <button
                             onClick={() => handleDeleteClick(filename)}
                             className="p-2 text-secondary-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"

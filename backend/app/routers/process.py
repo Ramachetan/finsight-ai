@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
+from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR
 
 from app.models.transaction import BankStatementFieldExtractionSchema
 from app.services.ade import get_ade_service
@@ -15,6 +16,26 @@ storage_service = StorageService()
 ade_service = get_ade_service()
 extraction_service = ExtractionService(ade_service, storage_service)
 progress_tracker = get_progress_tracker()
+
+
+def _exception_status_code(exc: Exception) -> int | None:
+    """
+    Best-effort extraction of an upstream HTTP status code from an exception.
+
+    We keep this intentionally simple: if an upstream client library attaches a
+    `status_code` or `response.status_code`, we preserve it; otherwise we fall
+    back to 500.
+    """
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+
+    response = getattr(exc, "response", None)
+    response_status = getattr(response, "status_code", None)
+    if isinstance(response_status, int):
+        return response_status
+
+    return None
 
 
 class SchemaUpdateRequest(BaseModel):
@@ -125,10 +146,13 @@ def process_file(folder_id: str, filename: str, force_reparse: bool = False):
             },
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error processing file: {e}")
         progress_tracker.clear(folder_id, filename)
-        raise HTTPException(status_code=500, detail=str(e))
+        status_code = _exception_status_code(e) or HTTP_500_INTERNAL_SERVER_ERROR
+        raise HTTPException(status_code=status_code, detail=str(e))
 
 
 @router.get("/{folder_id}/{filename}/status")
@@ -324,10 +348,13 @@ def parse_file(folder_id: str, filename: str, force_reparse: bool = False):
             "used_cache": False,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error parsing file: {e}")
         progress_tracker.clear(folder_id, filename)
-        raise HTTPException(status_code=500, detail=str(e))
+        status_code = _exception_status_code(e) or HTTP_500_INTERNAL_SERVER_ERROR
+        raise HTTPException(status_code=status_code, detail=str(e))
 
 
 # =============================================================================
@@ -570,4 +597,5 @@ def extract_transactions(folder_id: str, filename: str, use_custom_schema: bool 
     except Exception as e:
         print(f"Error extracting transactions: {e}")
         progress_tracker.clear(folder_id, filename)
-        raise HTTPException(status_code=500, detail=str(e))
+        status_code = _exception_status_code(e) or HTTP_500_INTERNAL_SERVER_ERROR
+        raise HTTPException(status_code=status_code, detail=str(e))
