@@ -481,62 +481,84 @@ const Preview: React.FC = () => {
 
                 {/* Analysis Result Viewer */}
                 <div className="bg-white rounded-lg shadow-md overflow-hidden flex flex-col">
-                    <div className="p-2 border-b border-secondary-200 flex items-center justify-between">
-                        <h2 className="font-semibold text-lg">Analysis Result</h2>
-                        <div className="flex items-center gap-2">
-                            <div className="flex bg-secondary-100 rounded-lg p-1">
+                    <div className="p-3 border-b border-secondary-200">
+                        {/* Row 1: Title + actions */}
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                                <h2 className="font-semibold text-lg leading-6 text-secondary-900">Analysis Result</h2>
+                                <div className="mt-0.5 text-xs text-secondary-500">
+                                    {activeView === 'csv' && csvData
+                                        ? `CSV • ${csvData.rows.filter(r => r && r.length > 0 && r.some(c => (c ?? '').trim() !== '')).length} rows`
+                                        : activeView === 'markdown'
+                                            ? 'Raw extracted text'
+                                            : activeView === 'chunks'
+                                                ? `Chunks • ${metadata?.chunks_count ?? 0} total`
+                                                : 'Schema editor'}
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                                {csvData && (
+                                    <Button size="sm" onClick={handleDownloadCsv}>
+                                        <Download size={16} className="mr-2" />
+                                        Download CSV
+                                    </Button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Row 2: View switcher */}
+                        <div className="mt-3">
+                            <div className="flex flex-wrap gap-1 bg-secondary-100/80 rounded-xl p-1">
                                 <button
                                     onClick={() => setActiveView('csv')}
-                                    className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeView === 'csv'
-                                        ? 'bg-white text-primary-600 shadow-sm'
-                                        : 'text-secondary-600 hover:text-secondary-900'
+                                    className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all min-w-[120px] ${activeView === 'csv'
+                                        ? 'bg-white text-primary-700 shadow-sm ring-1 ring-secondary-200'
+                                        : 'text-secondary-600 hover:text-secondary-900 hover:bg-white/60'
                                         }`}
                                 >
-                                    <Table size={16} className="mr-2" />
-                                    CSV
+                                    <Table size={16} className="hidden sm:block" />
+                                    <span>CSV</span>
                                     {csvData && (
-                                        <span className="ml-1.5 bg-green-100 text-green-700 text-xs px-1.5 py-0.5 rounded-full">
+                                        <span className="ml-1 bg-green-100 text-green-700 text-xs px-1.5 py-0.5 rounded-full">
                                             {csvData.rows.filter(r => r && r.length > 0 && r.some(c => (c ?? '').trim() !== '')).length}
                                         </span>
                                     )}
                                 </button>
+
                                 <button
                                     onClick={() => setActiveView('markdown')}
-                                    className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeView === 'markdown'
-                                        ? 'bg-white text-primary-600 shadow-sm'
-                                        : 'text-secondary-600 hover:text-secondary-900'
+                                    className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all min-w-[120px] ${activeView === 'markdown'
+                                        ? 'bg-white text-primary-700 shadow-sm ring-1 ring-secondary-200'
+                                        : 'text-secondary-600 hover:text-secondary-900 hover:bg-white/60'
                                         }`}
                                 >
-                                    <FileText size={16} className="mr-2" />
-                                    Raw Text
+                                    <FileText size={16} className="hidden sm:block" />
+                                    <span>Raw Text</span>
                                 </button>
+
                                 <button
                                     onClick={() => setActiveView('chunks')}
-                                    className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeView === 'chunks'
-                                        ? 'bg-white text-primary-600 shadow-sm'
-                                        : 'text-secondary-600 hover:text-secondary-900'
+                                    className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all min-w-[120px] ${activeView === 'chunks'
+                                        ? 'bg-white text-primary-700 shadow-sm ring-1 ring-secondary-200'
+                                        : 'text-secondary-600 hover:text-secondary-900 hover:bg-white/60'
                                         }`}
                                 >
-                                    <Layers size={16} className="mr-2" />
-                                    Chunks
+                                    <Layers size={16} className="hidden sm:block" />
+                                    <span>Chunks</span>
                                 </button>
+
                                 <button
                                     onClick={() => setActiveView('schema')}
-                                    className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-all ${activeView === 'schema'
-                                        ? 'bg-white text-primary-600 shadow-sm'
-                                        : 'text-secondary-600 hover:text-secondary-900'
+                                    className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all min-w-[120px] ${activeView === 'schema'
+                                        ? 'bg-white text-primary-700 shadow-sm ring-1 ring-secondary-200'
+                                        : 'text-secondary-600 hover:text-secondary-900 hover:bg-white/60'
                                         }`}
                                 >
-                                    <Settings size={16} className="mr-2" />
-                                    Schema
+                                    <Settings size={16} className="hidden sm:block" />
+                                    <span>Schema</span>
                                 </button>
                             </div>
-                            {csvData && (
-                                <Button size="sm" onClick={handleDownloadCsv}>
-                                    <Download size={16} className="mr-2" />
-                                    Download CSV
-                                </Button>
-                            )}
                         </div>
                     </div>
 

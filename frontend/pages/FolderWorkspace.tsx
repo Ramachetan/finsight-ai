@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { FolderDetails as FolderDetailsType } from '../types.ts';
 import * as api from '../lib/api.ts';
@@ -9,7 +9,19 @@ import ProcessingProgress from '../components/ProcessingProgress.tsx';
 import { Button } from '../components/ui/Button.tsx';
 import { Spinner } from '../components/ui/Spinner.tsx';
 import { Skeleton } from '../components/ui/Skeleton.tsx';
-import { Home, ChevronRight, FileText, Download, Eye, Trash2, CheckCircle, AlertCircle, Clock, FileSearch } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle,
+  ChevronRight,
+  Clock,
+  Download,
+  Eye,
+  FileSearch,
+  FileText,
+  Home,
+  MoreVertical,
+  Trash2,
+} from 'lucide-react';
 import { Modal } from '../components/ui/Modal.tsx';
 // Removed Info/metadata preview as markdown is available in the Preview page
 
@@ -27,6 +39,10 @@ const FolderWorkspace: React.FC = () => {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [fileToDelete, setFileToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  const [openActionsFor, setOpenActionsFor] = useState<string | null>(null);
+  const actionsMenuRef = useRef<HTMLDivElement | null>(null);
+  const [actionsMenuDirection, setActionsMenuDirection] = useState<'down' | 'up'>('down');
 
   // Info modal removed
 
@@ -71,6 +87,49 @@ const FolderWorkspace: React.FC = () => {
     setIsLoading(true);
     fetchFolderDetails();
   }, [fetchFolderDetails]);
+
+  useEffect(() => {
+    if (!openActionsFor) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpenActionsFor(null);
+    };
+
+    const onMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (actionsMenuRef.current && actionsMenuRef.current.contains(target)) return;
+      setOpenActionsFor(null);
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('mousedown', onMouseDown);
+
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('mousedown', onMouseDown);
+    };
+  }, [openActionsFor]);
+
+  useEffect(() => {
+    if (!openActionsFor) return;
+    if (!actionsMenuRef.current) return;
+
+    // Decide whether to open the menu upward or downward based on viewport space.
+    // This prevents the menu from being cut off for items near the bottom.
+    const rect = actionsMenuRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+
+    // Approx menu height: 140-180px depending on whether CSV is present.
+    const estimatedMenuHeight = 180;
+
+    if (spaceBelow < estimatedMenuHeight && spaceAbove > spaceBelow) {
+      setActionsMenuDirection('up');
+    } else {
+      setActionsMenuDirection('down');
+    }
+  }, [openActionsFor]);
 
   const handleUpload = async (files: File[]) => {
     if (!folderId) return;
@@ -215,39 +274,41 @@ const FolderWorkspace: React.FC = () => {
     }
   };
 
-  const renderActionButton = (filename: string) => {
+  const renderPrimaryAction = (filename: string) => {
     const status = processingStatus[filename] || 'idle';
     switch (status) {
       case 'parsing':
-        return <Button size="sm" disabled className="opacity-75">Parsing...</Button>;
+        return (
+          <Button size="sm" disabled className="opacity-75">
+            Parsing...
+          </Button>
+        );
       case 'parsed':
         return (
-          <div className="flex gap-2 justify-end">
-            <Button size="sm" onClick={() => handlePreview(filename)}>
-              <Eye size={16} className="mr-2" />Review & Extract
-            </Button>
-          </div>
+          <Button size="sm" onClick={() => handlePreview(filename)}>
+            <Eye size={16} className="mr-2" />
+            Review & Extract
+          </Button>
         );
       case 'extracted':
         return (
-          <div className="flex gap-2 justify-end">
-            <Button size="sm" variant="secondary" onClick={() => handlePreview(filename)}>
-              <Eye size={16} className="mr-2" />Preview
-            </Button>
-            <Button size="sm" onClick={() => handleDownloadCsv(filename)}>
-              <Download size={16} className="mr-2" />CSV
-            </Button>
-          </div>
+          <Button size="sm" variant="secondary" onClick={() => handlePreview(filename)}>
+            <Eye size={16} className="mr-2" />
+            Preview
+          </Button>
         );
       case 'error':
         return (
-          <Button size="sm" variant="danger" onClick={() => handleAnalyze(filename)}>Retry Parse</Button>
+          <Button size="sm" variant="danger" onClick={() => handleAnalyze(filename)}>
+            Retry Parse
+          </Button>
         );
       case 'idle':
       default:
         return (
           <Button size="sm" onClick={() => handleAnalyze(filename)}>
-            <FileSearch size={16} className="mr-2" />Parse
+            <FileSearch size={16} className="mr-2" />
+            Parse
           </Button>
         );
     }
@@ -298,7 +359,7 @@ const FolderWorkspace: React.FC = () => {
               <h2 className="text-xl font-bold text-secondary-800">Documents</h2>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-secondary-200 overflow-hidden">
+            <div className="bg-white rounded-xl shadow-sm border border-secondary-200 overflow-visible">
               {folder.files.length > 0 ? (
                 <ul className="divide-y divide-secondary-100">
                   {folder.files.map(filename => (
@@ -327,21 +388,69 @@ const FolderWorkspace: React.FC = () => {
                         </div>
 
                         <div className="flex items-center gap-2 self-end sm:self-center">
-                          {renderActionButton(filename)}
-                          <button
-                            onClick={() => handleDownloadPdf(filename)}
-                            className="p-2 text-secondary-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-all"
-                            title="PDF"
-                          >
-                            <Download size={18} />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteClick(filename)}
-                            className="p-2 text-secondary-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                            title="Delete file"
-                          >
-                            <Trash2 size={18} />
-                          </button>
+                          {renderPrimaryAction(filename)}
+
+                          <div className="relative" ref={openActionsFor === filename ? actionsMenuRef : undefined}>
+                            <button
+                              onClick={() => {
+                                setOpenActionsFor(prev => (prev === filename ? null : filename));
+                              }}
+                              className="p-2 text-secondary-500 hover:text-secondary-800 hover:bg-secondary-100 rounded-lg transition-all"
+                              title="More actions"
+                              aria-haspopup="menu"
+                              aria-expanded={openActionsFor === filename}
+                            >
+                              <MoreVertical size={18} />
+                            </button>
+
+                            {openActionsFor === filename && (
+                              <div
+                                className={`absolute right-0 w-48 bg-white border border-secondary-200 rounded-xl shadow-lg overflow-hidden z-50 ${actionsMenuDirection === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'
+                                  }`}
+                                role="menu"
+                              >
+                                <button
+                                  onClick={() => {
+                                    setOpenActionsFor(null);
+                                    handleDownloadPdf(filename);
+                                  }}
+                                  className="w-full px-3 py-2 text-sm text-secondary-700 hover:bg-secondary-50 flex items-center gap-2"
+                                  role="menuitem"
+                                >
+                                  <Download size={16} className="text-secondary-500" />
+                                  Download PDF
+                                </button>
+
+                                {(processingStatus[filename] || 'idle') === 'extracted' && (
+                                  <button
+                                    onClick={() => {
+                                      setOpenActionsFor(null);
+                                      handleDownloadCsv(filename);
+                                    }}
+                                    className="w-full px-3 py-2 text-sm text-secondary-700 hover:bg-secondary-50 flex items-center gap-2"
+                                    role="menuitem"
+                                  >
+                                    <Download size={16} className="text-secondary-500" />
+                                    Download CSV
+                                  </button>
+                                )}
+
+                                <div className="h-px bg-secondary-100" />
+
+                                <button
+                                  onClick={() => {
+                                    setOpenActionsFor(null);
+                                    handleDeleteClick(filename);
+                                  }}
+                                  className="w-full px-3 py-2 text-sm text-red-700 hover:bg-red-50 flex items-center gap-2"
+                                  role="menuitem"
+                                >
+                                  <Trash2 size={16} className="text-red-600" />
+                                  Delete
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </li>
