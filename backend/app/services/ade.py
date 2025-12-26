@@ -160,7 +160,7 @@ class AdeClientService:
                 progress_pct = status["progress"] * 100
                 progress_callback(
                     progress_pct,
-                    f"Parsing document... {progress_pct:.0f}% complete"
+                    "Processing document pages..."
                 )
 
             if status["status"] == "completed":
