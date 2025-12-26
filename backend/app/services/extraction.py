@@ -220,6 +220,9 @@ class ExtractionService:
                     failed_results.append(item)
                 elif isinstance(item, tuple):
                     successful_results.append(item)
+                else:
+                    # Log unexpected result types for debugging
+                    print(f"Warning: Unexpected result type {type(item)}: {item}")
             
             # Sort successful results by chunk index
             for chunk_idx, result in sorted(successful_results, key=lambda x: x[0]):
@@ -396,6 +399,9 @@ class ExtractionService:
                     failed_results.append(item)
                 elif isinstance(item, tuple):
                     successful_results.append(item)
+                else:
+                    # Log unexpected result types for debugging
+                    print(f"Warning: Unexpected result type {type(item)}: {item}")
             
             # Sort successful results by chunk index
             for chunk_idx, result in sorted(successful_results, key=lambda x: x[0]):
