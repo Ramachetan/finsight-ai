@@ -4,10 +4,13 @@ import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
-
+from app.services.ade import get_ade_service
 from app.services.storage import StorageService
+from fastapi.testclient import TestClient
 from main import app
+
+# Enable test mode for ADE service to use shorter timeouts
+get_ade_service(test_mode=True)
 
 # Global set to track folder IDs created during tests
 _test_folder_ids = set()
@@ -63,6 +66,23 @@ def mock_gcs_service(monkeypatch):
         service = StorageService()
         service.backend = MagicMock()
         return service
+
+
+@pytest.fixture
+def mock_parse_document():
+    """Provide a mock parsed document response for fast testing."""
+    return {
+        "markdown": "# Bank Statement\n\nDate | Amount | Balance\n2024-01-01 | 1000.00 | 50000.00\n",
+        "chunks": [
+            {
+                "id": "chunk-1",
+                "type": "text",
+                "markdown": "# Bank Statement\n\nDate | Amount | Balance\n2024-01-01 | 1000.00 | 50000.00\n",
+                "page_number": 1,
+                "grounding": {"page": 1, "box": {"left": 0, "top": 0, "right": 100, "bottom": 100}},
+            }
+        ],
+    }
 
 
 def pytest_sessionfinish(session, exitstatus):

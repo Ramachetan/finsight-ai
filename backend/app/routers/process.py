@@ -273,6 +273,9 @@ def parse_file(folder_id: str, filename: str, force_reparse: bool = False):
     1. Parse: Convert PDF to markdown/chunks (this endpoint)
     2. Extract: Extract structured data using a schema (separate endpoint)
 
+    For large documents (> 5 MB), this automatically uses Parse Jobs which
+    supports up to 6,000 pages. Standard parsing supports up to 100 pages.
+
     Args:
         folder_id: The folder containing the file
         filename: The file to parse
@@ -311,15 +314,31 @@ def parse_file(folder_id: str, filename: str, force_reparse: bool = False):
                     "used_cache": True,
                 }
 
+        # Define progress callback for parse updates
+        def update_progress(progress_pct: float, message: str):
+            # Scale progress: 10-90% for parsing, leave room for save
+            scaled = 10 + (progress_pct * 0.8)
+            progress_tracker.update(folder_id, filename, "Parsing", message, int(scaled))
+
         progress_tracker.update(
-            folder_id, filename, "Parsing", "Reading and converting document...", 10
+            folder_id, filename, "Parsing", "Reading document...", 5
         )
 
-        # Get file content and parse
+        # Get file content and parse (automatically uses Parse Jobs for large files)
         file_content = storage_service.read_file_content(folder_id, filename)
-        parsed_data = extraction_service.parse_document(file_content, filename)
+        
+        progress_tracker.update(
+            folder_id, filename, "Parsing", "Starting document parsing...", 10
+        )
+        
+        parsed_data = extraction_service.parse_document(
+            file_content, filename, progress_callback=update_progress
+        )
 
         # Save parsed output
+        progress_tracker.update(
+            folder_id, filename, "Parsing", "Saving parsed output...", 95
+        )
         storage_service.save_parsed_output(folder_id, filename, parsed_data)
         print(f"Saved parsed output for: {filename}")
 
