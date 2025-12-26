@@ -1,17 +1,26 @@
-# Python-generated files
-backend/__pycache__/
-backend/*.py[oc]
+
+# Python bytecode and cache
+*.pyc
+*.pyo
+__pycache__/
+
+# Build and dist
 frontend/build/
 frontend/dist/
 wheels/
 *.egg-info
 
-# Virtual environments
+
+# Virtual environments and env files
 backend/.venv
-
-backend/.env
 frontend/.venv
+backend/.env
 frontend/.env
-frontend/node_modules
 
+# Node and local storage
+frontend/node_modules
+backend/local_storage/
+
+
+# Misc
 .env/

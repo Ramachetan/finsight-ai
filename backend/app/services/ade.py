@@ -1,24 +1,29 @@
 """ADE (Advanced Document Extraction) client service."""
 
 import os
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Callable, Dict, List, Optional
 
-from ade import Ade
+from landingai_ade import LandingAIADE
+
+# Always use Parse Jobs to avoid the 100-page limit of the standard API.
+# Parse Jobs supports up to 6,000 pages / 1 GB and works for all document sizes.
 
 
 class AdeClientService:
     """Service for managing ADE client initialization and document processing."""
 
-    def __init__(self):
-        self._client: Optional[Ade] = None
+    def __init__(self, test_mode: bool = False):
+        self._client: Optional[LandingAIADE] = None
+        self.test_mode = test_mode
 
-    def get_client(self) -> Ade:
+    def get_client(self) -> LandingAIADE:
         """
         Get or create an ADE client instance.
         Uses VISION_AGENT_API_KEY or ADE_API_KEY from environment.
 
         Returns:
-            An initialized Ade client
+            An initialized LandingAIADE client
 
         Raises:
             ValueError: If neither API key is configured
@@ -35,13 +40,139 @@ class AdeClientService:
                 "ADE_API_KEY or VISION_AGENT_API_KEY environment variable is required"
             )
 
-        self._client = Ade(
+        self._client = LandingAIADE(
             apikey=api_key,
             # Configure retries and timeout for long documents
             max_retries=3,
             timeout=300.0,  # 5 minutes for large documents
         )
         return self._client
+
+    def create_parse_job(
+        self, file_content: bytes, model: str = "dpt-2-latest"
+    ) -> str:
+        """
+        Create an async parse job for large documents.
+
+        Args:
+            file_content: The PDF file bytes
+            model: The parsing model to use
+
+        Returns:
+            The job_id for tracking the parse job
+        """
+        client = self.get_client()
+        job = client.parse_jobs.create(document=file_content, model=model)
+        return job.job_id
+
+    def get_parse_job_status(self, job_id: str) -> Dict[str, Any]:
+        """
+        Get the status of a parse job.
+
+        Args:
+            job_id: The parse job ID
+
+        Returns:
+            Dictionary with status, progress (0-1), and data (if completed)
+        """
+        client = self.get_client()
+        response = client.parse_jobs.get(job_id)
+
+        result = {
+            "job_id": job_id,
+            "status": response.status,
+            "progress": getattr(response, "progress", 0) or 0,
+        }
+
+        # Include parsed data if completed
+        if response.status == "completed":
+            # For results < 1MB, data is in response.data
+            if hasattr(response, "data") and response.data:
+                result["data"] = {
+                    "markdown": response.data.markdown,
+                    "chunks": response.data.chunks,
+                }
+            # For results >= 1MB, need to fetch from output_url
+            elif hasattr(response, "output_url") and response.output_url:
+                import requests
+                output_response = requests.get(response.output_url)
+                output_response.raise_for_status()
+                output_data = output_response.json()
+                result["data"] = {
+                    "markdown": output_data.get("markdown", ""),
+                    "chunks": output_data.get("chunks", []),
+                }
+
+        # Include failure info if failed
+        if response.status == "failed":
+            result["error"] = getattr(response, "failure_reason", "Unknown error")
+
+        # Include partial failure info (some pages failed but job completed)
+        if hasattr(response, "metadata") and response.metadata:
+            meta = response.metadata
+            if hasattr(meta, "failed_pages") and meta.failed_pages:
+                result["failed_pages"] = meta.failed_pages
+                result["failure_reason"] = getattr(meta, "failure_reason", None)
+
+        return result
+
+    def wait_for_parse_job(
+        self,
+        job_id: str,
+        poll_interval: Optional[float] = None,
+        timeout: Optional[float] = None,
+        progress_callback: Optional[Callable[[float, str], None]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Wait for a parse job to complete, with optional progress callbacks.
+
+        Args:
+            job_id: The parse job ID
+            poll_interval: Seconds between status checks (defaults to 5s, or 0.1s in test mode)
+            timeout: Maximum seconds to wait (defaults to 600s, or 10s in test mode)
+            progress_callback: Optional callback(progress, message) for updates
+
+        Returns:
+            Dictionary with parsed markdown and chunks
+
+        Raises:
+            TimeoutError: If job doesn't complete within timeout
+            RuntimeError: If job fails
+        """
+        # Use shorter intervals/timeouts in test mode
+        if poll_interval is None:
+            poll_interval = 0.1 if self.test_mode else 5.0
+        if timeout is None:
+            timeout = 10.0 if self.test_mode else 600.0
+        
+        start_time = time.time()
+
+        while True:
+            elapsed = time.time() - start_time
+            if elapsed > timeout:
+                raise TimeoutError(
+                    f"Parse job {job_id} timed out after {timeout} seconds"
+                )
+
+            status = self.get_parse_job_status(job_id)
+
+            if progress_callback:
+                progress_pct = status["progress"] * 100
+                progress_callback(
+                    progress_pct,
+                    "Processing document pages..."
+                )
+
+            if status["status"] == "completed":
+                if "data" not in status:
+                    raise RuntimeError(f"Parse job {job_id} completed but no data returned")
+                return status["data"]
+
+            if status["status"] == "failed":
+                error_msg = status.get("error", "Unknown error")
+                raise RuntimeError(f"Parse job {job_id} failed: {error_msg}")
+
+            time.sleep(poll_interval)
 
     @staticmethod
     def pydantic_to_json_schema(model: type) -> dict:
@@ -165,10 +296,18 @@ class AdeClientService:
         return chunks_data
 
 
-# Global ADE client service instance
-_ade_service = AdeClientService()
+# Global ADE client service instances
+_ade_service = AdeClientService(test_mode=False)
+_ade_service_test = AdeClientService(test_mode=True)
 
 
-def get_ade_service() -> AdeClientService:
-    """Get the global ADE client service instance."""
-    return _ade_service
+def get_ade_service(test_mode: bool = False) -> AdeClientService:
+    """Get the global ADE client service instance.
+    
+    Args:
+        test_mode: If True, use test mode with shorter timeouts and poll intervals
+    
+    Returns:
+        The ADE service instance (separate instances for test and production modes)
+    """
+    return _ade_service_test if test_mode else _ade_service

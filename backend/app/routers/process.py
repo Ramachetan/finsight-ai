@@ -1,5 +1,7 @@
 """Router for document processing endpoints."""
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR
@@ -54,7 +56,7 @@ class SchemaUpdateRequest(BaseModel):
 
 
 @router.post("/{folder_id}/{filename}")
-def process_file(folder_id: str, filename: str, force_reparse: bool = False):
+async def process_file(folder_id: str, filename: str, force_reparse: bool = False):
     """
     Process a file using LandingAI ADE and save the result as CSV.
 
@@ -110,13 +112,15 @@ def process_file(folder_id: str, filename: str, force_reparse: bool = False):
                 print(f"Warning: Failed to cache parsed output: {e}")
 
         # Step 2: Extract structured data using default schema
-        print("Extracting structured data...")
+        print("Extracting structured data (concurrent chunks)...")
         progress_tracker.update(
             folder_id, filename, "Extracting", "Extracting transactions...", 75
         )
         
-        all_transactions = extraction_service.extract_transactions_from_parsed(
-            parsed_data, schema
+        all_transactions = await asyncio.to_thread(
+            extraction_service.extract_transactions_from_parsed,
+            parsed_data,
+            schema
         )
 
         # Create final extraction object
@@ -273,6 +277,9 @@ def parse_file(folder_id: str, filename: str, force_reparse: bool = False):
     1. Parse: Convert PDF to markdown/chunks (this endpoint)
     2. Extract: Extract structured data using a schema (separate endpoint)
 
+    For large documents (> 5 MB), this automatically uses Parse Jobs which
+    supports up to 6,000 pages. Standard parsing supports up to 100 pages.
+
     Args:
         folder_id: The folder containing the file
         filename: The file to parse
@@ -311,15 +318,27 @@ def parse_file(folder_id: str, filename: str, force_reparse: bool = False):
                     "used_cache": True,
                 }
 
+        # Define progress callback for parse updates
+        def update_progress(progress_pct: float, message: str):
+            # Scale progress: 10-95% for parsing, leave room for save
+            scaled = 10 + (progress_pct * 0.85)
+            progress_tracker.update(folder_id, filename, "Parsing", message, int(scaled))
+
         progress_tracker.update(
-            folder_id, filename, "Parsing", "Reading and converting document...", 10
+            folder_id, filename, "Parsing", "Reading document...", 5
         )
 
-        # Get file content and parse
+        # Get file content and parse (automatically uses Parse Jobs for large files)
         file_content = storage_service.read_file_content(folder_id, filename)
-        parsed_data = extraction_service.parse_document(file_content, filename)
+        
+        parsed_data = extraction_service.parse_document(
+            file_content, filename, progress_callback=update_progress
+        )
 
         # Save parsed output
+        progress_tracker.update(
+            folder_id, filename, "Parsing", "Saving parsed output...", 95
+        )
         storage_service.save_parsed_output(folder_id, filename, parsed_data)
         print(f"Saved parsed output for: {filename}")
 
@@ -495,7 +514,7 @@ def delete_extraction_schema(folder_id: str, filename: str):
 
 
 @router.post("/{folder_id}/{filename}/extract")
-def extract_transactions(folder_id: str, filename: str, use_custom_schema: bool = True):
+async def extract_transactions(folder_id: str, filename: str, use_custom_schema: bool = True):
     """
     Extract transactions from a parsed document using the stored schema.
 
@@ -536,6 +555,12 @@ def extract_transactions(folder_id: str, filename: str, use_custom_schema: bool 
             )
             print(f"Using default schema for extraction: {filename}")
 
+        # Define progress callback for extraction updates
+        def update_extraction_progress(progress_pct: float, message: str):
+            progress_tracker.update(
+                folder_id, filename, "Extracting", message, int(progress_pct)
+            )
+
         progress_tracker.update(
             folder_id, filename, "Extracting", "Starting extraction...", 10
         )
@@ -543,11 +568,11 @@ def extract_transactions(folder_id: str, filename: str, use_custom_schema: bool 
         # Extract transactions and convert to CSV
         # Use dynamic extraction for custom schemas to respect user's field selection
         if used_custom_schema:
-            progress_tracker.update(
-                folder_id, filename, "Extracting", "Extracting with custom schema...", 40
-            )
-            all_transactions = extraction_service.extract_transactions_as_dicts(
-                parsed_data, schema
+            all_transactions = await asyncio.to_thread(
+                extraction_service.extract_transactions_as_dicts,
+                parsed_data,
+                schema,
+                update_extraction_progress
             )
             print(f"Total extracted {len(all_transactions)} transactions (dynamic)")
 
@@ -557,11 +582,11 @@ def extract_transactions(folder_id: str, filename: str, use_custom_schema: bool 
             csv_content = convert_dict_transactions_to_csv(all_transactions, schema)
             transactions_count = len(all_transactions)
         else:
-            progress_tracker.update(
-                folder_id, filename, "Extracting", "Extracting with default schema...", 40
-            )
-            all_transactions = extraction_service.extract_transactions_from_parsed(
-                parsed_data, schema
+            all_transactions = await asyncio.to_thread(
+                extraction_service.extract_transactions_from_parsed,
+                parsed_data,
+                schema,
+                update_extraction_progress
             )
 
             extraction = BankStatementFieldExtractionSchema(

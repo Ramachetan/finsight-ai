@@ -56,17 +56,26 @@ class TestProcessEndpoints:
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
 
-        mock_parse_response = MagicMock()
-        mock_parse_response.markdown = "# Bank Statement\nSample markdown content"
-        # Mock chunks for chunk-based processing
-        mock_chunk = MagicMock()
+        # Mock parse_jobs flow (async parsing)
+        # Use spec for mock objects to ensure consistency
+        mock_chunk = MagicMock(spec=['id', 'type', 'markdown', 'grounding'])
         mock_chunk.markdown = "# Bank Statement\nSample markdown content"
         mock_chunk.id = "chunk-1"
         mock_chunk.type = "text"
         mock_chunk.grounding = None
-        mock_parse_response.chunks = [mock_chunk]
-
-        mock_client.ade.parse.return_value = mock_parse_response
+        
+        mock_data = MagicMock(spec=['markdown', 'chunks'])
+        mock_data.markdown = "# Bank Statement\nSample markdown content"
+        mock_data.chunks = [mock_chunk]
+        
+        mock_parse_job = MagicMock(spec=['job_id', 'status', 'data', 'progress'])
+        mock_parse_job.job_id = "job-123"
+        mock_parse_job.status = "completed"
+        mock_parse_job.data = mock_data
+        mock_parse_job.progress = 1.0
+        
+        mock_client.parse_jobs.create.return_value = mock_parse_job
+        mock_client.parse_jobs.get.return_value = mock_parse_job
 
         # Mock extract response - return dict that can be converted to schema
         extract_dict = {
@@ -80,7 +89,9 @@ class TestProcessEndpoints:
                 }
             ]
         }
-        mock_client.ade.extract.return_value = extract_dict
+        mock_extract_response = MagicMock()
+        mock_extract_response.extraction = extract_dict
+        mock_client.extract.return_value = mock_extract_response
 
         response = client.post("/api/process/folder1/statement.pdf")
 
@@ -316,22 +327,32 @@ class TestParseEndpoint:
         mock_get_parsed.return_value = None
         mock_read.return_value = b"fake pdf content"
 
-        # Mock Ade client
+        # Mock Ade client with parse_jobs flow
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
 
-        mock_parse_response = MagicMock()
-        mock_parse_response.markdown = "# Bank Statement\nSample markdown content"
-        mock_chunk = MagicMock()
-        mock_chunk.markdown = "# Bank Statement"
+        # Create a mock parse job response with data
+        mock_data = MagicMock(spec=['markdown', 'chunks'])
+        mock_data.markdown = "# Bank Statement\nSample markdown content"
+        mock_chunk = MagicMock(spec=['id', 'type', 'markdown', 'grounding'])
         mock_chunk.id = "chunk-1"
         mock_chunk.type = "text"
-        mock_chunk.grounding = MagicMock()
+        mock_chunk.markdown = "# Bank Statement"
+        mock_chunk.grounding = MagicMock(spec=['page', 'box'])
         mock_chunk.grounding.page = 0
         mock_chunk.grounding.box = None
-        mock_parse_response.chunks = [mock_chunk]
+        mock_data.chunks = [mock_chunk]
+        
+        mock_parse_job = MagicMock(spec=['job_id', 'status', 'data', 'progress'])
+        mock_parse_job.job_id = "job-123"
+        mock_parse_job.status = "completed"
+        mock_parse_job.data = mock_data
+        mock_parse_job.progress = 1.0
 
-        mock_client.ade.parse.return_value = mock_parse_response
+        # Configure parse_jobs to return the job object
+        mock_client.parse_jobs = MagicMock()
+        mock_client.parse_jobs.create = MagicMock(return_value=mock_parse_job)
+        mock_client.parse_jobs.get = MagicMock(return_value=mock_parse_job)
 
         response = client.post("/api/process/folder1/statement.pdf/parse")
 
@@ -493,7 +514,9 @@ class TestExtractEndpoint:
                 }
             ]
         }
-        mock_client.ade.extract.return_value = extract_dict
+        mock_extract_response = MagicMock()
+        mock_extract_response.extraction = extract_dict
+        mock_client.extract.return_value = mock_extract_response
 
         response = client.post("/api/process/folder1/statement.pdf/extract")
 
@@ -535,7 +558,9 @@ class TestExtractEndpoint:
                 }
             ]
         }
-        mock_client.ade.extract.return_value = extract_dict
+        mock_extract_response = MagicMock()
+        mock_extract_response.extraction = extract_dict
+        mock_client.extract.return_value = mock_extract_response
 
         response = client.post("/api/process/folder1/statement.pdf/extract")
 
