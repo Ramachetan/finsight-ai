@@ -296,8 +296,9 @@ class AdeClientService:
         return chunks_data
 
 
-# Global ADE client service instance
+# Global ADE client service instances
 _ade_service = AdeClientService(test_mode=False)
+_ade_service_test = AdeClientService(test_mode=True)
 
 
 def get_ade_service(test_mode: bool = False) -> AdeClientService:
@@ -307,9 +308,6 @@ def get_ade_service(test_mode: bool = False) -> AdeClientService:
         test_mode: If True, use test mode with shorter timeouts and poll intervals
     
     Returns:
-        The ADE service instance, optionally configured for testing
+        The ADE service instance (separate instances for test and production modes)
     """
-    global _ade_service
-    if test_mode:
-        _ade_service.test_mode = True
-    return _ade_service
+    return _ade_service_test if test_mode else _ade_service

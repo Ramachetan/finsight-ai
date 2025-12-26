@@ -57,16 +57,22 @@ class TestProcessEndpoints:
         mock_get_client.return_value = mock_client
 
         # Mock parse_jobs flow (async parsing)
-        mock_parse_job = MagicMock()
-        mock_parse_job.job_id = "job-123"
-        mock_parse_job.status = "completed"
-        mock_parse_job.markdown = "# Bank Statement\nSample markdown content"
-        mock_chunk = MagicMock()
+        # Use spec for mock objects to ensure consistency
+        mock_chunk = MagicMock(spec=['id', 'type', 'markdown', 'grounding'])
         mock_chunk.markdown = "# Bank Statement\nSample markdown content"
         mock_chunk.id = "chunk-1"
         mock_chunk.type = "text"
         mock_chunk.grounding = None
-        mock_parse_job.chunks = [mock_chunk]
+        
+        mock_data = MagicMock(spec=['markdown', 'chunks'])
+        mock_data.markdown = "# Bank Statement\nSample markdown content"
+        mock_data.chunks = [mock_chunk]
+        
+        mock_parse_job = MagicMock(spec=['job_id', 'status', 'data', 'progress'])
+        mock_parse_job.job_id = "job-123"
+        mock_parse_job.status = "completed"
+        mock_parse_job.data = mock_data
+        mock_parse_job.progress = 1.0
         
         mock_client.parse_jobs.create.return_value = mock_parse_job
         mock_client.parse_jobs.get.return_value = mock_parse_job

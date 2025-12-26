@@ -9,8 +9,11 @@ from app.services.storage import StorageService
 from fastapi.testclient import TestClient
 from main import app
 
-# Enable test mode for ADE service to use shorter timeouts
-get_ade_service(test_mode=True)
+
+@pytest.fixture(scope="session", autouse=True)
+def enable_ade_test_mode():
+    """Enable test mode for ADE service to use shorter timeouts during tests."""
+    get_ade_service(test_mode=True)
 
 # Global set to track folder IDs created during tests
 _test_folder_ids = set()
