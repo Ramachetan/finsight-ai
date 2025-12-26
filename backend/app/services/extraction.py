@@ -19,6 +19,25 @@ class ExtractionService:
         # Thread pool for concurrent extraction (chunk extraction is I/O bound via HTTP)
         self.executor = ThreadPoolExecutor(max_workers=4)
 
+    def shutdown(self, wait: bool = True) -> None:
+        """
+        Shut down the internal thread pool executor.
+
+        Args:
+            wait: If True, this call will block until all pending futures are done.
+        """
+        if self.executor is not None:
+            self.executor.shutdown(wait=wait)
+            self.executor = None
+
+    def __enter__(self) -> "ExtractionService":
+        """Allow use of ExtractionService as a context manager."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Ensure the executor is shut down when leaving a context manager scope."""
+        self.shutdown(wait=True)
+
     def parse_document(
         self,
         file_content: bytes,
@@ -104,17 +123,21 @@ class ExtractionService:
         Returns:
             List of Transaction objects
         """
-        # Run async extraction in the current event loop or create a new one
+        # Run async extraction depending on whether an event loop is already running
         try:
-            loop = asyncio.get_running_loop()
-            # If we're in an async context, create a task
-            return loop.run_until_complete(
-                self._extract_transactions_from_parsed_async(parsed_data, schema, progress_callback)
-            )
+            # If this does not raise, we're in an async context and must not block the loop.
+            asyncio.get_running_loop()
         except RuntimeError:
-            # No running loop, use asyncio.run
+            # No running loop, safe to create one and block until completion.
             return asyncio.run(
                 self._extract_transactions_from_parsed_async(parsed_data, schema, progress_callback)
+            )
+        else:
+            # In an async context: return the coroutine so the caller can await it.
+            # This should not happen in the current codebase, but handles it correctly.
+            raise RuntimeError(
+                "extract_transactions_from_parsed called from async context. "
+                "This method is synchronous. Use _extract_transactions_from_parsed_async directly."
             )
 
     async def _extract_transactions_from_parsed_async(
@@ -143,8 +166,8 @@ class ExtractionService:
             print(f"Processing {len(chunks)} chunks concurrently")
             total_chunks = len(chunks)
 
-            # Create extraction tasks for all chunks
-            loop = asyncio.get_event_loop()
+            # Create extraction tasks for all chunks using the current running event loop
+            loop = asyncio.get_running_loop()
             tasks = []
             
             for i, chunk in enumerate(chunks):
@@ -169,16 +192,17 @@ class ExtractionService:
                 tasks.append(task)
 
             # Track progress in real-time while preserving order with gather()
-            completed_count = [0]  # Use list for nonlocal mutation in nested async
+            completed_count = 0
 
             async def extract_with_tracking(task_coro, chunk_idx):
+                nonlocal completed_count
                 result = await task_coro
-                completed_count[0] += 1
+                completed_count += 1
                 if progress_callback and total_chunks > 0:
-                    progress_pct = 40 + (completed_count[0] / total_chunks) * 35  # 40-75% for extraction
+                    progress_pct = 40 + (completed_count / total_chunks) * 35  # 40-75% for extraction
                     progress_callback(
                         progress_pct,
-                        f"Extracted chunk {completed_count[0]}/{total_chunks}"
+                        f"Extracted chunk {completed_count}/{total_chunks}"
                     )
                 return (chunk_idx, result)
 
@@ -187,15 +211,31 @@ class ExtractionService:
             results = await asyncio.gather(*tracked_tasks, return_exceptions=True)
 
             # Process results in original chunk order
-            for chunk_idx, result in sorted(results, key=lambda x: x[0] if isinstance(x, tuple) else float('inf')):
-                if isinstance(result, Exception):
-                    print(f"Error extracting chunk {chunk_idx + 1}: {result}")
-                elif result is not None:
+            # Separate successful results from exceptions before sorting
+            successful_results = []
+            failed_results = []
+            
+            for item in results:
+                if isinstance(item, Exception):
+                    failed_results.append(item)
+                elif isinstance(item, tuple):
+                    successful_results.append(item)
+                else:
+                    # Log unexpected result types for debugging
+                    print(f"Warning: Unexpected result type {type(item)}: {item}")
+            
+            # Sort successful results by chunk index
+            for chunk_idx, result in sorted(successful_results, key=lambda x: x[0]):
+                if result is not None:
                     chunk_extraction = result
                     all_transactions.extend(chunk_extraction.transactions)
                     print(
                         f"Chunk {chunk_idx + 1}/{total_chunks}: Found {len(chunk_extraction.transactions)} transactions"
                     )
+            
+            # Log any failures
+            for error in failed_results:
+                print(f"Error extracting chunk: {error}")
         else:
             # Fallback to full markdown if no chunks available
             print("No chunks found, extracting from full markdown")
@@ -263,16 +303,21 @@ class ExtractionService:
         Returns:
             List of transaction dictionaries
         """
-        # Run async extraction in the current event loop or create a new one
+        # Run async extraction depending on whether an event loop is already running
         try:
-            loop = asyncio.get_running_loop()
-            return loop.run_until_complete(
-                self._extract_transactions_as_dicts_async(parsed_data, schema, progress_callback)
-            )
+            # If this does not raise, we're in an async context and must not block the loop.
+            asyncio.get_running_loop()
         except RuntimeError:
-            # No running loop, use asyncio.run
+            # No running loop, safe to create one and block until completion.
             return asyncio.run(
                 self._extract_transactions_as_dicts_async(parsed_data, schema, progress_callback)
+            )
+        else:
+            # In an async context: return the coroutine so the caller can await it.
+            # This should not happen in the current codebase, but handles it correctly.
+            raise RuntimeError(
+                "extract_transactions_as_dicts called from async context. "
+                "This method is synchronous. Use _extract_transactions_as_dicts_async directly."
             )
 
     async def _extract_transactions_as_dicts_async(
@@ -300,8 +345,8 @@ class ExtractionService:
             print(f"Processing {len(chunks)} chunks concurrently (dynamic schema)")
             total_chunks = len(chunks)
 
-            # Create extraction tasks for all chunks
-            loop = asyncio.get_event_loop()
+            # Create extraction tasks for all chunks using the current running event loop
+            loop = asyncio.get_running_loop()
             tasks = []
             
             for i, chunk in enumerate(chunks):
@@ -326,16 +371,17 @@ class ExtractionService:
                 tasks.append(task)
 
             # Track progress in real-time while preserving order with gather()
-            completed_count = [0]  # Use list for nonlocal mutation in nested async
+            completed_count = 0
 
             async def extract_with_tracking(task_coro, chunk_idx):
+                nonlocal completed_count
                 result = await task_coro
-                completed_count[0] += 1
+                completed_count += 1
                 if progress_callback and total_chunks > 0:
-                    progress_pct = 40 + (completed_count[0] / total_chunks) * 35  # 40-75% for extraction
+                    progress_pct = 40 + (completed_count / total_chunks) * 35  # 40-75% for extraction
                     progress_callback(
                         progress_pct,
-                        f"Extracted chunk {completed_count[0]}/{total_chunks}"
+                        f"Extracted chunk {completed_count}/{total_chunks}"
                     )
                 return (chunk_idx, result)
 
@@ -344,13 +390,29 @@ class ExtractionService:
             results = await asyncio.gather(*tracked_tasks, return_exceptions=True)
 
             # Process results in original chunk order
-            for chunk_idx, result in sorted(results, key=lambda x: x[0] if isinstance(x, tuple) else float('inf')):
-                if isinstance(result, Exception):
-                    print(f"Error extracting chunk {chunk_idx + 1}: {result}")
-                elif result is not None:
+            # Separate successful results from exceptions before sorting
+            successful_results = []
+            failed_results = []
+            
+            for item in results:
+                if isinstance(item, Exception):
+                    failed_results.append(item)
+                elif isinstance(item, tuple):
+                    successful_results.append(item)
+                else:
+                    # Log unexpected result types for debugging
+                    print(f"Warning: Unexpected result type {type(item)}: {item}")
+            
+            # Sort successful results by chunk index
+            for chunk_idx, result in sorted(successful_results, key=lambda x: x[0]):
+                if result is not None:
                     txns = result
                     all_transactions.extend(txns)
                     print(f"Chunk {chunk_idx + 1}/{total_chunks}: Found {len(txns)} transactions")
+            
+            # Log any failures
+            for error in failed_results:
+                print(f"Error extracting chunk: {error}")
         else:
             print("No chunks found, extracting from full markdown (dynamic schema)")
             if not markdown_content:
