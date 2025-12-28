@@ -44,7 +44,7 @@ class AdeClientService:
             apikey=api_key,
             # Configure retries and timeout for long documents
             max_retries=3,
-            timeout=300.0,  # 5 minutes for large documents
+            timeout=1200.0,  # 20 minutes for large documents
         )
         return self._client
 
@@ -143,7 +143,7 @@ class AdeClientService:
         if poll_interval is None:
             poll_interval = 0.1 if self.test_mode else 5.0
         if timeout is None:
-            timeout = 10.0 if self.test_mode else 600.0
+            timeout = 10.0 if self.test_mode else 1200.0
         
         start_time = time.time()
 
