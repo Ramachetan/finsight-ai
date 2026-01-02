@@ -43,8 +43,9 @@ class AdeClientService:
         self._client = LandingAIADE(
             apikey=api_key,
             # Configure retries and timeout for long documents
-            max_retries=3,
-            timeout=300.0,  # 5 minutes for large documents
+            # Server gateway timeout is 475s, so we set client timeout higher
+            max_retries=5,
+            timeout=480.0,  # 8 minutes for large document extraction
         )
         return self._client
 

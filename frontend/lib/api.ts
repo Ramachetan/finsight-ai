@@ -5,32 +5,42 @@ import { API_BASE_URL } from '../constants.ts';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 30000, // 30 seconds default timeout
 });
 
-// Interceptor to handle API errors gracefully
-apiClient.interceptors.response.use(
-  response => response,
-  (error: AxiosError<ApiError>) => {
-    const data = error.response?.data as any;
+// Extended timeout client for long-running operations (parsing, extraction)
+// Extraction can take up to 8 minutes for large documents
+const longRunningClient = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 900000, // 15 minutes for large document extraction
+});
 
-    // Pass through FastAPI validation errors (detail is an array)
-    if (data && Array.isArray(data.detail)) {
-      return Promise.reject(data as ApiError);
-    }
+// Apply the same error interceptor to long-running client
+const errorInterceptor = (error: AxiosError<ApiError>) => {
+  const data = error.response?.data as any;
 
-    // Normalize FastAPI HTTPException(detail="...") where detail is a string
-    if (data && typeof data.detail === 'string') {
-      return Promise.reject({
-        detail: [{ msg: data.detail }],
-      } as ApiError);
-    }
+  // Pass through FastAPI validation errors (detail is an array)
+  if (data && Array.isArray(data.detail)) {
+    return Promise.reject(data as ApiError);
+  }
 
-    // Fallback: network error or unexpected shape
+  // Normalize FastAPI HTTPException(detail="...") where detail is a string
+  if (data && typeof data.detail === 'string') {
     return Promise.reject({
-      detail: [{ msg: error.message || 'An unexpected network error occurred.' }],
+      detail: [{ msg: data.detail }],
     } as ApiError);
   }
-);
+
+  // Fallback: network error or unexpected shape
+  return Promise.reject({
+    detail: [{ msg: error.message || 'An unexpected network error occurred.' }],
+  } as ApiError);
+};
+
+longRunningClient.interceptors.response.use(response => response, errorInterceptor);
+
+// Interceptor to handle API errors gracefully
+apiClient.interceptors.response.use(response => response, errorInterceptor);
 
 // --- Folder Management ---
 
@@ -135,7 +145,8 @@ export const getFileMarkdown = async (folderId: string, filename: string): Promi
 
 export const parseFile = async (folderId: string, filename: string, forceReparse: boolean = false): Promise<ParseResponse> => {
   const encodedFilename = encodeURIComponent(filename);
-  const { data } = await apiClient.post<ParseResponse>(
+  // Use long-running client for parsing (can take several minutes for large docs)
+  const { data } = await longRunningClient.post<ParseResponse>(
     `/process/${folderId}/${encodedFilename}/parse`,
     null,
     { params: { force_reparse: forceReparse } }
@@ -161,7 +172,8 @@ export const deleteExtractionSchema = async (folderId: string, filename: string)
 
 export const extractTransactions = async (folderId: string, filename: string, useCustomSchema: boolean = true): Promise<ExtractResponse> => {
   const encodedFilename = encodeURIComponent(filename);
-  const { data } = await apiClient.post<ExtractResponse>(
+  // Use long-running client for extraction (can take up to 8 minutes for large docs)
+  const { data } = await longRunningClient.post<ExtractResponse>(
     `/process/${folderId}/${encodedFilename}/extract`,
     null,
     { params: { use_custom_schema: useCustomSchema } }
